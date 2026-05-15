@@ -4,17 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
-import {
-  ChevronRight,
-  CircleHelp,
-  GitBranch,
-  History,
-  PanelLeft,
-  Plus,
-  Settings,
-  Sparkles,
-  Terminal,
-} from "lucide-react";
+import { ChevronRight, GitBranch, History, Plus, Settings, Sparkles, Terminal } from "lucide-react";
 import { TopNav } from "./TopNav";
 import { StatusBar } from "./StatusBar";
 import { RightPanel } from "./RightPanel";
@@ -78,14 +68,13 @@ function LeftSidebar({
   return (
     <aside className="hidden lg:flex h-full w-[286px] shrink-0 flex-col border-r border-[#1a1d24] bg-[#0f1117]">
       <div className="flex h-12 items-center gap-3 border-b border-[#1a1d24] px-3">
-        <div className="flex gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#ff5c5c]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#ffb454]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#00cc6e]" />
-        </div>
-        <div className="ml-1 flex h-6 w-6 items-center justify-center rounded border border-[#252933] text-[#6b7569]">
-          <PanelLeft size={13} />
-        </div>
+        <Link
+          href="/dashboard"
+          className="flex h-6 w-6 items-center justify-center rounded border border-[#252933] bg-[#002a17] text-[10px] font-medium text-[#00ff88] transition-colors hover:border-[#00cc6e] hover:text-[#e6f0e4]"
+          aria-label="open dashboard"
+        >
+          tx
+        </Link>
         <div className="flex-1" />
         <button
           onClick={onOpenPalette}
@@ -126,7 +115,11 @@ function LeftSidebar({
             tx
           </span>
           <span className="min-w-0 flex-1 truncate">terminalx</span>
-          <button className="text-[#6b7569] hover:text-[#e6f0e4]" aria-label="workspace actions">
+          <button
+            onClick={() => router.push("/dashboard")}
+            className="text-[#6b7569] hover:text-[#e6f0e4]"
+            aria-label="new workspace"
+          >
             <Plus size={13} />
           </button>
         </div>
@@ -150,9 +143,6 @@ function LeftSidebar({
       </div>
 
       <div className="flex h-12 items-center gap-2 border-t border-[#1a1d24] px-3 text-[#6b7569]">
-        <button className="rounded p-1.5 transition-colors hover:bg-[#14161e] hover:text-[#e6f0e4]">
-          <CircleHelp size={14} />
-        </button>
         <Link
           href="/settings"
           className="rounded p-1.5 transition-colors hover:bg-[#14161e] hover:text-[#e6f0e4]"
@@ -168,17 +158,6 @@ function LeftSidebar({
 function InspectorTerminal({ activeSession }: { activeSession: string | null }) {
   return (
     <div className="h-[260px] shrink-0 border-t border-[#1a1d24] bg-[#0a0b10]">
-      <div className="flex h-9 items-center gap-5 border-b border-[#1a1d24] px-3 text-[12px] text-[#6b7569]">
-        <span className="text-[#a8b3a6]">Setup</span>
-        <span>Run</span>
-        <span className="relative flex h-full items-center text-[#e6f0e4]">
-          Terminal
-          <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#00ff88]" />
-        </span>
-        <button className="ml-auto text-[#6b7569] hover:text-[#e6f0e4]" aria-label="new terminal">
-          <Plus size={13} />
-        </button>
-      </div>
       <div className="p-4 font-mono text-[12px] leading-6 text-[#a8b3a6]">
         <div className="text-[#6b7569]">
           terminalx <ChevronRight size={12} className="inline align-[-2px]" />{" "}

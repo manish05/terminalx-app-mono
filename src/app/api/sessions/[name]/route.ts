@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { killSession } from "@/lib/tmux";
 import { getUserScoping, canAccessSession } from "@/lib/session-scope";
 import { audit } from "@/lib/audit-log";
-import { deleteMeta } from "@/lib/ai-sessions";
+import { deleteMeta, ensureManagedSession } from "@/lib/ai-sessions";
 
 interface Ctx {
   params: Promise<{ name: string }>;
@@ -27,6 +27,13 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     const { username, role, shouldScope } = getUserScoping(req.headers);
     if (shouldScope && (!username || !canAccessSession(username, role, name))) {
       return NextResponse.json({ error: "cannot delete another user's session" }, { status: 403 });
+    }
+
+    if (!ensureManagedSession(name)) {
+      return NextResponse.json(
+        { error: "refusing to delete a tmux session not managed by TerminalX" },
+        { status: 403 }
+      );
     }
 
     killSession(name);

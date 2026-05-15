@@ -30,13 +30,36 @@ import { verifyJwt, parseCookies } from "../src/lib/auth";
 import { getAuthMode } from "../src/lib/auth-config";
 import { ensureDefaultAdmin } from "../src/lib/users";
 import { startTelegramBot, stopTelegramBot, handleTelegramUpdate } from "../src/lib/telegram/bot";
-import {
-  allowsNoAuthOnPublicHost,
-  getConfiguredMaxSessions,
-  shouldRefuseNoAuth,
-} from "../src/lib/security-config";
+import { getTelegramConfig, telegramConfigFingerprint } from "../src/lib/telegram/config";
+import { getConfiguredMaxSessions } from "../src/lib/security-config";
+import { assertValidStartupConfiguration } from "../src/lib/startup-validation";
 
 // ── Config ──────────────────────────────────────────────────────────────────
+
+function loadDotEnv(): void {
+  const envFile = path.resolve(__dirname, "..", ".env");
+  if (!fs.existsSync(envFile)) return;
+  const raw = fs.readFileSync(envFile, "utf-8");
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadDotEnv();
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const TERMINUS_ROOT = path.resolve(process.env.TERMINUS_ROOT || process.env.HOME || "/");
@@ -53,17 +76,10 @@ applyGlobalOptions();
 
 const AUTH_MODE = getAuthMode();
 
-if (shouldRefuseNoAuth(AUTH_MODE, TERMINUS_HOST)) {
-  console.error(
-    "[security] refusing to start with TERMINALX_AUTH_MODE=none on a non-loopback host. " +
-      "Set TERMINALX_AUTH_MODE=local/password/google, bind to 127.0.0.1, or set TERMINALX_ALLOW_NO_AUTH=1."
-  );
-  process.exit(1);
-}
-
-if (AUTH_MODE === "none" && allowsNoAuthOnPublicHost()) {
-  console.warn("[security] authentication is disabled by TERMINALX_ALLOW_NO_AUTH=1");
-}
+assertValidStartupConfiguration({
+  host: TERMINUS_HOST,
+  cwd: path.resolve(__dirname, ".."),
+});
 
 function warnIfReadableByGroupOrWorld(filePath: string): void {
   if (process.platform === "win32") return;
@@ -446,7 +462,7 @@ app.prepare().then(() => {
     // route handler runs in a separately-bundled module where the bot
     // reference is null and updates are silently dropped.
     if (parsedUrl.pathname === "/api/telegram/webhook" && req.method === "POST") {
-      const expected = process.env.TERMINALX_TELEGRAM_WEBHOOK_SECRET;
+      const expected = getTelegramConfig().webhookSecret;
       const got = req.headers["x-telegram-bot-api-secret-token"];
       if (!expected || got !== expected) {
         res.writeHead(401, { "Content-Type": "application/json" });
@@ -554,10 +570,21 @@ app.prepare().then(() => {
   warnIfReadableByGroupOrWorld(path.resolve(process.cwd(), "data", ".revoked-tokens.json"));
   warnIfReadableByGroupOrWorld(path.resolve(process.cwd(), "data", "telegram-state.json"));
 
-  // Start the Telegram bot if env is configured. Safe no-op when not.
+  // Start the Telegram bot if configured. Safe no-op when not.
   startTelegramBot().catch((err) => {
     console.error("[telegram] startTelegramBot failed", err);
   });
+  let telegramConfigState = telegramConfigFingerprint();
+  const telegramConfigPoll = setInterval(() => {
+    const next = telegramConfigFingerprint();
+    if (next === telegramConfigState) return;
+    telegramConfigState = next;
+    stopTelegramBot()
+      .then(() => startTelegramBot())
+      .catch((err) => {
+        console.error("[telegram] restart after config change failed", err);
+      });
+  }, 5000);
 
   server.listen(PORT, TERMINUS_HOST, () => {
     console.log(`TerminalX server ready on http://${TERMINUS_HOST}:${PORT}`);
@@ -574,6 +601,7 @@ app.prepare().then(() => {
   // Graceful shutdown
   const shutdown = () => {
     console.log("\nShutting down...");
+    clearInterval(telegramConfigPoll);
     void stopTelegramBot();
     destroyAllPtys();
     destroyAllLogStreams();

@@ -21,8 +21,8 @@ services:
       - TERMINALX_ADMIN_PASSWORD=${TERMINALX_ADMIN_PASSWORD:-}
       # Required when TERMINALX_AUTH_MODE=password
       - TERMINALX_PASSWORD=${TERMINALX_PASSWORD:-}
-      # Required only if you intentionally expose auth mode "none" beyond loopback
-      - TERMINALX_ALLOW_NO_AUTH=${TERMINALX_ALLOW_NO_AUTH:-}
+      # Optional; container entrypoint generates and persists one when absent
+      - TERMINALX_JWT_SECRET=${TERMINALX_JWT_SECRET:-}
     restart: unless-stopped
 
 volumes:

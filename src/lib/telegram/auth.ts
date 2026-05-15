@@ -1,5 +1,11 @@
 import { getUserByUsername } from "@/lib/users";
 import { getAuthMode } from "@/lib/auth-config";
+import {
+  getTelegramConfig,
+  isTelegramConfigured,
+  parseTelegramAllowedUsers,
+  telegramConfigHasAnyValue,
+} from "./config";
 
 export interface BotIdentity {
   username: string;
@@ -12,23 +18,8 @@ export interface BotIdentity {
  *
  * v1 ships with a single user expected; the multi-entry format is forward-compat.
  */
-function parseAllowedUsers(raw: string | undefined): Map<number, string> {
-  const map = new Map<number, string>();
-  if (!raw) return map;
-  for (const entry of raw.split(",")) {
-    const [tgId, username] = entry.split(":").map((s) => s.trim());
-    if (!tgId || !username) continue;
-    const id = Number(tgId);
-    if (!Number.isFinite(id)) continue;
-    map.set(id, username);
-  }
-  return map;
-}
-
-let cached: Map<number, string> | null = null;
 function allowedUsers(): Map<number, string> {
-  if (!cached) cached = parseAllowedUsers(process.env.TERMINALX_TELEGRAM_ALLOWED_USERS);
-  return cached;
+  return parseTelegramAllowedUsers(getTelegramConfig().allowedUsers);
 }
 
 /**
@@ -60,9 +51,7 @@ export async function resolveTelegramIdentity(
  * configured. Used at server boot to decide whether to start the bot at all.
  */
 export function botIsConfigured(): boolean {
-  const token = process.env.TERMINALX_TELEGRAM_BOT_TOKEN;
-  const hasUsers = allowedUsers().size > 0;
-  return Boolean(token && hasUsers && getTelegramForumChatId() !== null);
+  return isTelegramConfigured();
 }
 
 export function telegramAllowedUserCount(): number {
@@ -70,8 +59,10 @@ export function telegramAllowedUserCount(): number {
 }
 
 export function getTelegramForumChatId(): number | null {
-  const raw = process.env.TERMINALX_TELEGRAM_FORUM_CHAT_ID;
-  if (!raw) return null;
-  const chatId = Number(raw);
+  const chatId = getTelegramConfig().forumChatId;
   return Number.isFinite(chatId) && chatId !== 0 ? chatId : null;
+}
+
+export function telegramHasPartialConfig(): boolean {
+  return telegramConfigHasAnyValue();
 }

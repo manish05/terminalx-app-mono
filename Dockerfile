@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     ca-certificates \
     tini \
+    openssl \
     curl \
   && rm -rf /var/lib/apt/lists/*
 
@@ -36,6 +37,7 @@ RUN npm run build
 
 # Create data directory for recordings / secrets / user store.
 RUN mkdir -p /app/data && chown terminus:terminus /app/data && chmod 700 /app/data
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Runtime configuration
 ENV NODE_ENV=production
@@ -54,5 +56,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS http://localhost:${PORT}/health || exit 1
 
 # tini reaps zombies and forwards signals to node (important for tmux children).
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker-entrypoint.sh"]
 CMD ["npx", "tsx", "server/index.ts"]

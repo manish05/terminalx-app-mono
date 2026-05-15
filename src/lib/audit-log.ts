@@ -24,7 +24,9 @@ export type AuditEvent =
   | "replay_started"
   | "replay_opened"
   | "log_access_denied"
-  | "jwt_verify_failed";
+  | "jwt_verify_failed"
+  | "telegram_config_updated"
+  | "telegram_topic_view_updated";
 
 interface AuditEntry {
   timestamp: string;

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 export type SessionKind = "bash" | "claude" | "codex";
+export type TelegramViewMode = "chat" | "screen" | "off";
 
 export interface TmuxSession {
   name: string;
@@ -12,6 +13,12 @@ export interface TmuxSession {
   lastActivity?: string;
   activePath?: string;
   kind?: SessionKind;
+  managed?: boolean;
+  telegram?: {
+    topicId: number;
+    viewMode: TelegramViewMode;
+    endedAtMs?: number;
+  } | null;
 }
 
 export interface CreateSessionOptions {
@@ -28,6 +35,7 @@ interface UseSessionsReturn {
     options?: CreateSessionOptions
   ) => Promise<TmuxSession | null>;
   killSession: (name: string) => Promise<boolean>;
+  setTelegramViewMode: (sessionName: string, viewMode: TelegramViewMode) => Promise<boolean>;
   refresh: () => Promise<void>;
 }
 
@@ -99,6 +107,28 @@ export function useSessions(): UseSessionsReturn {
     [refresh]
   );
 
+  const setTelegramViewMode = useCallback(
+    async (sessionName: string, viewMode: TelegramViewMode): Promise<boolean> => {
+      try {
+        const res = await fetch("/api/telegram/topics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionName, viewMode }),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => null);
+          throw new Error(j?.error ?? `Failed to update Telegram topic: ${res.status}`);
+        }
+        await refresh();
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to update Telegram topic");
+        return false;
+      }
+    },
+    [refresh]
+  );
+
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -114,5 +144,5 @@ export function useSessions(): UseSessionsReturn {
     return () => window.removeEventListener("terminalx:session-ended", handler);
   }, [refresh]);
 
-  return { sessions, isLoading, error, createSession, killSession, refresh };
+  return { sessions, isLoading, error, createSession, killSession, setTelegramViewMode, refresh };
 }

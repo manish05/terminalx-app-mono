@@ -2,7 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { listSessions, createSession, killSession } from "@/lib/tmux";
 import { getUserScoping, canAccessSession, scopedSessionName } from "@/lib/session-scope";
 import { audit } from "@/lib/audit-log";
-import { listMetadata, saveMeta, deleteMeta, commandForKind, isValidKind } from "@/lib/ai-sessions";
+import {
+  listMetadata,
+  saveMeta,
+  deleteMeta,
+  commandForKind,
+  isValidKind,
+  ensureManagedSession,
+} from "@/lib/ai-sessions";
+import { listTopics } from "@/lib/telegram/state";
+import { botIsConfigured, type BotIdentity } from "@/lib/telegram/auth";
+import { ensureTopicForSession } from "@/lib/telegram/bot";
 import { getConfiguredMaxSessions } from "@/lib/security-config";
 
 export async function GET(req: NextRequest) {
@@ -19,10 +29,22 @@ export async function GET(req: NextRequest) {
 
     const metadata = listMetadata();
     const byName = new Map(metadata.map((m) => [m.name, m]));
-    const annotated = sessions.map((s) => ({
-      ...s,
-      kind: byName.get(s.name)?.kind ?? "bash",
-    }));
+    const telegramByName = new Map(listTopics().map((t) => [t.sessionName, t]));
+    const annotated = sessions.map((s) => {
+      const telegram = telegramByName.get(s.name);
+      return {
+        ...s,
+        kind: byName.get(s.name)?.kind ?? "bash",
+        managed: ensureManagedSession(s.name),
+        telegram: telegram
+          ? {
+              topicId: telegram.topicId,
+              viewMode: telegram.viewMode ?? "chat",
+              endedAtMs: telegram.endedAtMs,
+            }
+          : null,
+      };
+    });
 
     return NextResponse.json({ sessions: annotated });
   } catch (err) {
@@ -62,13 +84,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { username, hasIdentity } = getUserScoping(req.headers);
+    const { username, role, hasIdentity } = getUserScoping(req.headers);
     if (!hasIdentity) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
     const finalName = scopedSessionName(name, username);
     const maxSessions = getConfiguredMaxSessions();
-    if (listSessions().length >= maxSessions) {
+    if (listSessions().filter((s) => ensureManagedSession(s.name)).length >= maxSessions) {
       return NextResponse.json(
         { error: `Maximum number of sessions reached (${maxSessions})` },
         { status: 429 }
@@ -80,20 +102,39 @@ export async function POST(req: NextRequest) {
     });
     const startDir = process.env.TERMINUS_ROOT || process.env.HOME;
     createSession(finalName, command ?? undefined, startDir);
-    if (sessionKind !== "bash") {
-      await saveMeta({
-        name: finalName,
-        kind: sessionKind,
-        createdAt: new Date().toISOString(),
-        createdBy: username || undefined,
-      });
+    await saveMeta({
+      name: finalName,
+      kind: sessionKind,
+      createdAt: new Date().toISOString(),
+      createdBy: username || undefined,
+      managed: true,
+    });
+    let telegramTopic: {
+      topicId: number;
+      sessionName: string;
+      viewMode: string;
+      url: string;
+      created: boolean;
+    } | null = null;
+    if (botIsConfigured()) {
+      const identity: BotIdentity = {
+        username: username ?? "web",
+        role: role === "user" ? "user" : "admin",
+      };
+      try {
+        const result = await ensureTopicForSession(identity, finalName, "off");
+        telegramTopic = result.topic;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[telegram] failed to bind web-created session ${finalName}: ${message}`);
+      }
     }
     audit("session_created", {
       username: username || undefined,
       detail: `${finalName} (${sessionKind})`,
     });
     return NextResponse.json(
-      { success: true, name: finalName, kind: sessionKind },
+      { success: true, name: finalName, kind: sessionKind, telegram: telegramTopic },
       { status: 201 }
     );
   } catch (err) {
@@ -122,6 +163,13 @@ export async function DELETE(req: NextRequest) {
 
     if (shouldScope && (!username || !canAccessSession(username, role, name))) {
       return NextResponse.json({ error: "Cannot delete another user's session" }, { status: 403 });
+    }
+
+    if (!ensureManagedSession(name)) {
+      return NextResponse.json(
+        { error: "Refusing to delete a tmux session not managed by TerminalX" },
+        { status: 403 }
+      );
     }
 
     killSession(name);

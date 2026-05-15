@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Files, GitBranch, Search, SlidersHorizontal } from "lucide-react";
+import { CheckCircle2, Files, GitBranch } from "lucide-react";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { LogViewer } from "@/components/logs/LogViewer";
 import { SnippetsPanel } from "@/components/snippets/SnippetsPanel";
@@ -38,18 +38,6 @@ export function RightPanel({ defaultTab = "files" }: RightPanelProps) {
           </button>
         ))}
         <span className="flex-1" />
-        <button
-          className="rounded p-1.5 text-[#6b7569] transition-colors hover:bg-[#14161e] hover:text-[#e6f0e4]"
-          aria-label="panel options"
-        >
-          <SlidersHorizontal size={13} />
-        </button>
-        <button
-          className="rounded p-1.5 text-[#6b7569] transition-colors hover:bg-[#14161e] hover:text-[#e6f0e4]"
-          aria-label="search files"
-        >
-          <Search size={13} />
-        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">

@@ -108,10 +108,11 @@ export function scroll(sessionName: string, action: "up" | "down" | "cancel"): v
 }
 
 /**
- * Render the live screen for a topic in screen mode (pinned-message edit) or
- * chat mode (incremental new-line messages). Stops streaming if the tmux
- * session has gone away, while keeping the topic binding so /delete can remove
- * the stale Telegram topic after an ownership check.
+ * Render the live screen for a topic in screen mode (pinned-message edit),
+ * chat mode (incremental new-line messages), or off mode (no session output).
+ * Stops streaming if the tmux session has gone away, while keeping the topic
+ * binding so /delete can remove the stale Telegram topic after an ownership
+ * check.
  */
 async function renderAndFlush(bot: Bot, topicId: number): Promise<void> {
   const rt = runtimes.get(topicId);
@@ -139,6 +140,9 @@ async function renderAndFlush(bot: Bot, topicId: number): Promise<void> {
     const ansi = captureVisiblePane(binding.sessionName);
     if (!ansi) return;
     const mode = binding.viewMode ?? defaultViewMode(binding.kind);
+    if (mode === "off") {
+      return;
+    }
     if (mode === "chat") {
       await flushChat(bot, chatId, topicId, binding.sessionName, ansi, rt);
     } else {

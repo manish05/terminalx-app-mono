@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # TerminalX — Start Script
-# Usage: ./start.sh [--no-auth] [--password] [--local]
+# Usage: ./start.sh [--password] [--local]
 
 set -e
 
@@ -19,12 +19,18 @@ TERMINUS_LOG_PATHS="${TERMINUS_LOG_PATHS:-/var/log,~/.pm2/logs}"
 # ── Auth Mode ───────────────────────────────────────────────────────────────
 AUTH_MODE="${TERMINALX_AUTH_MODE:-local}"
 
-if [ "$1" = "--no-auth" ]; then
-  AUTH_MODE="none"
-elif [ "$1" = "--password" ]; then
+if [ "${1:-}" = "--no-auth" ]; then
+  echo "TERMINALX_AUTH_MODE=none is no longer supported. Use --local, --password, or Google OAuth." >&2
+  exit 1
+elif [ "${1:-}" = "--password" ]; then
   AUTH_MODE="password"
-elif [ "$1" = "--local" ]; then
+elif [ "${1:-}" = "--local" ]; then
   AUTH_MODE="local"
+fi
+
+if [ "$AUTH_MODE" = "none" ]; then
+  echo "TERMINALX_AUTH_MODE=none is not allowed. Configure local, password, or google auth." >&2
+  exit 1
 fi
 
 # ── Prompt for credentials if not set ───────────────────────────────────────
@@ -47,7 +53,7 @@ if [ "$AUTH_MODE" = "local" ]; then
 fi
 
 # ── JWT Secret (auto-generate if not set) ───────────────────────────────────
-if [ -z "$TERMINALX_JWT_SECRET" ] && [ "$AUTH_MODE" != "none" ]; then
+if [ -z "$TERMINALX_JWT_SECRET" ]; then
   SECRET_FILE=".terminalx-secret"
   if [ -f "$SECRET_FILE" ]; then
     TERMINALX_JWT_SECRET=$(cat "$SECRET_FILE")

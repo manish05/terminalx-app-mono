@@ -27,7 +27,23 @@ One URL replaces your daily SSH workflow.
 
 ## Quick Start
 
-### Docker (recommended)
+### One-command setup
+
+```bash
+git clone https://github.com/dudhatparesh/terminalx-app-mono.git
+cd terminalx-app-mono
+npm run setup
+```
+
+The setup script checks Node.js/tmux, creates a secure `.env`, generates a JWT secret, creates first-start local admin credentials, installs dependencies, and builds the app.
+
+To run under PM2:
+
+```bash
+npm run setup -- --pm2
+```
+
+### Docker
 
 ```bash
 docker compose up
@@ -52,7 +68,7 @@ npm run start &
 tailscale serve --bg 3000
 ```
 
-Now accessible at `https://your-machine.tailnet.ts.net` with zero auth configuration needed.
+Now accessible at `https://your-machine.tailnet.ts.net`. TerminalX still requires its own authentication.
 
 ## Architecture
 
@@ -93,17 +109,16 @@ All settings via environment variables. See [`.env.example`](.env.example) for t
 | `TERMINUS_SCROLLBACK`            | `10000`                | tmux scrollback history lines                                                                                        |
 | `TERMINUS_LOG_PATHS`             | `/var/log,~/.pm2/logs` | Log directories to scan                                                                                              |
 | `TERMINUS_RECORD_SESSIONS`       | `false`                | Record every PTY session to `data/recordings/*.jsonl` for replay (⚠ captures everything you type, including secrets) |
-| `TERMINALX_AUTH_MODE`            | `local`                | Auth mode: `local`, `password`, `google`, `none`                                                                     |
+| `TERMINALX_AUTH_MODE`            | `local`                | Auth mode: `local`, `password`, or `google`. `none` is refused at startup                                            |
 | `TERMINALX_PUBLIC_URL`           | —                      | Canonical external URL for OAuth and redirects behind a proxy                                                        |
 | `TERMINALX_TRUST_PROXY_HEADERS`  | `false`                | Trust `X-Forwarded-*` headers only when a trusted proxy overwrites them                                              |
-| `TERMINALX_ALLOW_NO_AUTH`        | —                      | Required to run `AUTH_MODE=none` on a non-loopback bind address                                                      |
 | `TERMINALX_GOOGLE_CLIENT_ID`     | —                      | Google OAuth client ID (when `AUTH_MODE=google`)                                                                     |
 | `TERMINALX_GOOGLE_CLIENT_SECRET` | —                      | Google OAuth client secret                                                                                           |
 | `TERMINALX_ALLOWED_EMAILS`       | —                      | Comma-separated allowlist of Google emails; empty denies everyone                                                    |
 
 ## Authentication
 
-TerminalX defaults to local username/password auth in the Docker and example configs. `AUTH_MODE=none` is available for loopback, Tailscale, VPN, or other trusted-network deployments, but the server refuses no-auth mode on a non-loopback bind address unless `TERMINALX_ALLOW_NO_AUTH=1` is set.
+TerminalX defaults to local username/password auth and refuses to start without authentication. `TERMINALX_AUTH_MODE=none` is no longer supported.
 
 Choose an auth mode:
 
@@ -123,6 +138,18 @@ npm run start
 ```
 
 In `local` mode, non-admin users can only access their own terminal sessions (prefixed with their username). In `google` mode, only emails in `TERMINALX_ALLOWED_EMAILS` can sign in — an empty list denies everyone.
+
+## Telegram
+
+Telegram can be configured either with environment variables or from the Settings page as an admin. Each Telegram forum topic maps to one tmux session. Topic responses can be set per session:
+
+```text
+/view chat
+/view screen
+/view off
+```
+
+The same response mode is available from the dashboard and Settings UI for sessions that already have a Telegram topic.
 
 ## How It Compares
 
@@ -168,6 +195,8 @@ npm run lint         # ESLint
 - WebSocket Origin validation prevents cross-site hijacking
 - PTY processes run with sanitized environment (server secrets not exposed)
 - Rate limiting on login attempts
+- Server startup fails if required auth secrets are missing
+- Session deletion refuses to kill tmux sessions not created or tracked by TerminalX
 - Structured audit logging for security events
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for reporting security vulnerabilities.

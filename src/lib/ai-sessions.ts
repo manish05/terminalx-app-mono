@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { ensureSecureDir } from "./secure-dir";
+import { getSessionCreatedMs, isTerminalXMarkedSession, markTerminalXSession } from "./tmux";
 
 export type SessionKind = "bash" | "claude" | "codex";
 
@@ -9,6 +10,7 @@ export interface SessionMeta {
   kind: SessionKind;
   createdAt: string;
   createdBy?: string;
+  managed?: boolean;
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -73,6 +75,30 @@ export async function deleteMeta(name: string): Promise<void> {
 
 export function getMeta(name: string): SessionMeta | undefined {
   return listMetadata().find((m) => m.name === name);
+}
+
+export function isManagedSession(name: string): boolean {
+  return Boolean(getMeta(name)) && isTerminalXMarkedSession(name);
+}
+
+export function canAdoptManagedSession(name: string): boolean {
+  const meta = getMeta(name);
+  if (!meta) return false;
+  const metaCreatedMs = Date.parse(meta.createdAt);
+  const tmuxCreatedMs = getSessionCreatedMs(name);
+  if (!Number.isFinite(metaCreatedMs) || !tmuxCreatedMs) return false;
+  return Math.abs(tmuxCreatedMs - metaCreatedMs) <= 60_000;
+}
+
+export function ensureManagedSession(name: string): boolean {
+  if (isManagedSession(name)) return true;
+  if (!canAdoptManagedSession(name)) return false;
+  try {
+    markTerminalXSession(name);
+    return isTerminalXMarkedSession(name);
+  } catch {
+    return false;
+  }
 }
 
 const CLI_BINS: Record<SessionKind, string | null> = {

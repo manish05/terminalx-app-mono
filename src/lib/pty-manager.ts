@@ -1,5 +1,5 @@
 import * as pty from "node-pty";
-import { hasSession, createSession, tmuxTarget } from "./tmux";
+import { hasSession, tmuxTarget } from "./tmux";
 
 export interface PtyInstance {
   id: string;
@@ -39,9 +39,8 @@ export function createPty(
     throw new Error("Invalid session name");
   }
 
-  // Ensure the tmux session exists
   if (!hasSession(sessionName)) {
-    createSession(sessionName);
+    throw new Error("Session does not exist. Create it from the dashboard first.");
   }
 
   const id = `pty-${sessionName}-${Date.now()}`;

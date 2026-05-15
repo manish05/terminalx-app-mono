@@ -46,7 +46,7 @@ export function attachedKeyboard(): InlineKeyboardMarkup {
         { text: "snap", callback_data: CB.SNAP },
       ],
       [
-        { text: "toggle view", callback_data: CB.VIEW },
+        { text: "responses", callback_data: CB.VIEW },
         { text: "detach", callback_data: CB.DETACH },
         { text: "kill", callback_data: CB.KILL },
       ],

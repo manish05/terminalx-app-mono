@@ -19,6 +19,7 @@
   "scripts": {
     "dev": "tsx server/index.ts",
     "dev:next": "next dev",
+    "setup": "bash scripts/setup.sh",
     "build": "next build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "start:next": "next start",

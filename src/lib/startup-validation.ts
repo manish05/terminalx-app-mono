@@ -1,0 +1,105 @@
+import * as fs from "fs";
+import * as path from "path";
+import { getAllowedEmails, getAuthMode } from "./auth-config";
+
+export interface StartupValidationOptions {
+  host: string;
+  cwd?: string;
+}
+
+export interface StartupValidationResult {
+  errors: string[];
+  warnings: string[];
+}
+
+const MIN_SECRET_LENGTH = 32;
+const MIN_PASSWORD_LENGTH = 8;
+
+function dataPath(cwd = process.cwd(), file: string): string {
+  return path.join(cwd, "data", file);
+}
+
+function hasExistingLocalUser(cwd = process.cwd()): boolean {
+  const usersFile = dataPath(cwd, "users.json");
+  try {
+    const raw = fs.readFileSync(usersFile, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) && parsed.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function hasLongEnoughSecret(raw: string | undefined): boolean {
+  return Boolean(raw && raw.trim().length >= MIN_SECRET_LENGTH);
+}
+
+function hasLongEnoughPassword(raw: string | undefined): boolean {
+  return Boolean(raw && raw.length >= MIN_PASSWORD_LENGTH);
+}
+
+export function validateStartupConfiguration(
+  opts: StartupValidationOptions
+): StartupValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const cwd = opts.cwd ?? process.cwd();
+  const authMode = getAuthMode();
+
+  if (authMode === "none") {
+    errors.push(
+      "TERMINALX_AUTH_MODE=none is not allowed. Configure local, password, or google auth."
+    );
+  }
+
+  if (!hasLongEnoughSecret(process.env.TERMINALX_JWT_SECRET)) {
+    errors.push(`TERMINALX_JWT_SECRET must be set and at least ${MIN_SECRET_LENGTH} characters.`);
+  }
+
+  if (authMode === "password" && !hasLongEnoughPassword(process.env.TERMINALX_PASSWORD)) {
+    errors.push(
+      `TERMINALX_PASSWORD must be set and at least ${MIN_PASSWORD_LENGTH} characters in password auth mode.`
+    );
+  }
+
+  if (authMode === "local") {
+    const hasUsers = hasExistingLocalUser(cwd);
+    if (!hasUsers && !hasLongEnoughPassword(process.env.TERMINALX_ADMIN_PASSWORD)) {
+      errors.push(
+        `TERMINALX_ADMIN_PASSWORD must be set and at least ${MIN_PASSWORD_LENGTH} characters for first local-auth startup.`
+      );
+    }
+  }
+
+  if (authMode === "google") {
+    if (!process.env.TERMINALX_GOOGLE_CLIENT_ID?.trim()) {
+      errors.push("TERMINALX_GOOGLE_CLIENT_ID is required in google auth mode.");
+    }
+    if (!process.env.TERMINALX_GOOGLE_CLIENT_SECRET?.trim()) {
+      errors.push("TERMINALX_GOOGLE_CLIENT_SECRET is required in google auth mode.");
+    }
+    if (getAllowedEmails().length === 0) {
+      errors.push("TERMINALX_ALLOWED_EMAILS must contain at least one email in google auth mode.");
+    }
+  }
+
+  if (opts.host === "0.0.0.0" && !process.env.TERMINALX_PUBLIC_URL?.trim()) {
+    warnings.push(
+      "TERMINUS_HOST=0.0.0.0 without TERMINALX_PUBLIC_URL can produce incorrect external URLs behind proxies."
+    );
+  }
+
+  return { errors, warnings };
+}
+
+export function assertValidStartupConfiguration(opts: StartupValidationOptions): void {
+  const result = validateStartupConfiguration(opts);
+  for (const warning of result.warnings) {
+    console.warn(`[security] ${warning}`);
+  }
+  if (result.errors.length === 0) return;
+  for (const error of result.errors) {
+    console.error(`[security] ${error}`);
+  }
+  process.exit(1);
+}

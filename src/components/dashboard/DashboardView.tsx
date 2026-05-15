@@ -3,7 +3,12 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Bot, Copy, Plus, RefreshCw, Sparkles, Terminal, X } from "lucide-react";
-import { useSessions, type SessionKind, type TmuxSession } from "@/hooks/useSessions";
+import {
+  useSessions,
+  type SessionKind,
+  type TelegramViewMode,
+  type TmuxSession,
+} from "@/hooks/useSessions";
 
 function slugify(raw: string): string {
   return raw
@@ -25,16 +30,22 @@ function SessionRow({
   s,
   onAttach,
   onKill,
+  onTelegramMode,
 }: {
   s: TmuxSession;
   onAttach: (s: TmuxSession) => void;
   onKill: (name: string) => void;
+  onTelegramMode: (sessionName: string, mode: TelegramViewMode) => void;
 }) {
+  const canKill = s.managed !== false;
+
   return (
     <div
-      onClick={() => onAttach(s)}
-      className="flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-3 bg-[#0f1117] border border-[#1a1d24]
-        rounded cursor-pointer hover:border-[#363b47] transition-colors group"
+      onClick={() => {
+        onAttach(s);
+      }}
+      className={`flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-3 bg-[#0f1117] border border-[#1a1d24]
+        rounded transition-colors group cursor-pointer hover:border-[#363b47]`}
     >
       <span
         className="w-2 h-2 rounded-full bg-[#00ff88] shrink-0"
@@ -57,9 +68,28 @@ function SessionRow({
               {s.kind}
             </span>
           )}
+          <select
+            value={s.telegram?.viewMode ?? "off"}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              e.stopPropagation();
+              onTelegramMode(s.name, e.target.value as TelegramViewMode);
+            }}
+            className="hidden sm:block shrink-0 rounded border border-[#252933] bg-[#07080c] px-1 py-0.5 text-[9px] uppercase tracking-wider text-[#5ccfe6] outline-none"
+            aria-label={`Telegram responses for ${s.name}`}
+          >
+            <option value="chat">tg chat</option>
+            <option value="screen">tg screen</option>
+            <option value="off">tg off</option>
+          </select>
           {s.attached && (
             <span className="shrink-0 px-1 py-0.5 text-[9px] uppercase tracking-wider rounded bg-[#00ff88]/20 text-[#00ff88] leading-none hidden sm:inline">
               attached
+            </span>
+          )}
+          {s.managed === false && (
+            <span className="shrink-0 px-1 py-0.5 text-[9px] uppercase tracking-wider rounded bg-[#ffb454]/10 text-[#ffb454] leading-none hidden sm:inline">
+              external
             </span>
           )}
         </div>
@@ -77,18 +107,19 @@ function SessionRow({
       <button
         onClick={(e) => {
           e.stopPropagation();
+          if (!canKill) return;
           onKill(s.name);
         }}
-        className="hidden sm:block p-1.5 text-[#6b7569] opacity-0 group-hover:opacity-100 hover:text-[#ff5c5c] transition-all shrink-0"
-        title="kill session"
+        className={`hidden sm:block p-1.5 opacity-0 group-hover:opacity-100 transition-all shrink-0 ${
+          canKill ? "text-[#6b7569] hover:text-[#ff5c5c]" : "text-[#3f4742] cursor-not-allowed"
+        }`}
+        title={canKill ? "kill session" : "unmanaged tmux session"}
         aria-label={`kill session ${s.name}`}
+        disabled={!canKill}
       >
         <X size={14} />
       </button>
-      <span
-        className="shrink-0 px-2.5 py-1 text-[10px] rounded border border-[#00cc6e] text-[#00ff88]
-          bg-transparent group-hover:bg-[#00ff88]/10 transition-colors"
-      >
+      <span className="shrink-0 px-2.5 py-1 text-[10px] rounded border border-[#00cc6e] text-[#00ff88] bg-transparent transition-colors group-hover:bg-[#00ff88]/10">
         attach →
       </span>
     </div>
@@ -97,7 +128,8 @@ function SessionRow({
 
 export function DashboardView() {
   const router = useRouter();
-  const { sessions, isLoading, createSession, killSession, refresh } = useSessions();
+  const { sessions, isLoading, createSession, killSession, setTelegramViewMode, refresh } =
+    useSessions();
   const [showDialog, setShowDialog] = useState(false);
   const [name, setName] = useState("");
   const [kind, setKind] = useState<SessionKind>("bash");
@@ -207,7 +239,13 @@ export function DashboardView() {
         ) : (
           <div className="flex flex-col gap-2">
             {sessions.map((s) => (
-              <SessionRow key={s.name} s={s} onAttach={attach} onKill={killSession} />
+              <SessionRow
+                key={s.name}
+                s={s}
+                onAttach={attach}
+                onKill={killSession}
+                onTelegramMode={setTelegramViewMode}
+              />
             ))}
           </div>
         )}

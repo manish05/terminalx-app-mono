@@ -6,6 +6,7 @@ import {
   hasSession,
   getSessionCreatedMs,
   isPaneTui,
+  paneForegroundCommand,
 } from "@/lib/tmux";
 import { canAccessSession, scopedSessionName } from "@/lib/session-scope";
 import {
@@ -13,6 +14,7 @@ import {
   saveMeta,
   getMeta,
   isValidKind,
+  ensureManagedSession,
   type SessionKind,
 } from "@/lib/ai-sessions";
 import {
@@ -20,13 +22,11 @@ import {
   botIsConfigured,
   getTelegramForumChatId,
   telegramAllowedUserCount,
+  telegramHasPartialConfig,
   type BotIdentity,
 } from "./auth";
-import {
-  getConfiguredMaxSessions,
-  getTelegramMaxTopics,
-  isReadOnlyMode,
-} from "@/lib/security-config";
+import { getConfiguredMaxSessions, isReadOnlyMode } from "@/lib/security-config";
+import { getTelegramConfig } from "./config";
 import { sessionsKeyboard, CB } from "./keyboard";
 import {
   setTopic,
@@ -36,6 +36,7 @@ import {
   listTopics,
   setForumChatId,
   patchTopic,
+  type ViewMode,
   type TopicBinding,
 } from "./state";
 import {
@@ -134,14 +135,16 @@ async function topicBindingForMessage(
 }
 
 function topicQuotaReached(): number | null {
-  const maxTopics = getTelegramMaxTopics();
+  const maxTopics = getTelegramConfig().maxTopics;
   if (!Number.isFinite(maxTopics)) return null;
   return listTopics().length >= maxTopics ? maxTopics : null;
 }
 
 function sessionQuotaReached(): number | null {
   const maxSessions = getConfiguredMaxSessions();
-  return listSessions().length >= maxSessions ? maxSessions : null;
+  return listSessions().filter((s) => ensureManagedSession(s.name)).length >= maxSessions
+    ? maxSessions
+    : null;
 }
 
 function sessionBindingDefaults(
@@ -150,8 +153,11 @@ function sessionBindingDefaults(
 ): Pick<TopicBinding, "kind" | "cwd"> {
   const meta = getMeta(sessionName);
   const session = listSessions().find((s) => s.name === sessionName);
+  const foreground = paneForegroundCommand(sessionName);
+  const inferredKind =
+    foreground === "claude" || foreground === "codex" ? (foreground as SessionKind) : "bash";
   return {
-    kind: meta?.kind ?? fallback?.kind ?? "bash",
+    kind: meta?.kind ?? fallback?.kind ?? inferredKind,
     cwd:
       session?.activePath ?? fallback?.cwd ?? process.env.TERMINUS_ROOT ?? process.env.HOME ?? "/",
   };
@@ -232,6 +238,101 @@ async function attachToTopic(b: Bot, identity: BotIdentity, binding: TopicBindin
   }
 }
 
+function botForTopicManagement(): Bot | null {
+  if (bot) return bot;
+  const config = getTelegramConfig();
+  if (!config.enabled || !config.botToken) return null;
+  return new Bot(config.botToken);
+}
+
+export interface EnsureTopicResult {
+  topic: {
+    topicId: number;
+    sessionName: string;
+    viewMode: ViewMode;
+    url: string;
+    created: boolean;
+  };
+}
+
+export async function ensureTopicForSession(
+  identity: BotIdentity,
+  sessionName: string,
+  viewMode?: ViewMode
+): Promise<EnsureTopicResult> {
+  if (!/^[a-zA-Z0-9_.\-]+$/.test(sessionName)) {
+    throw new Error("invalid session name");
+  }
+  if (!canAccessSession(identity.username, identity.role, sessionName)) {
+    throw new Error("access denied");
+  }
+  if (!hasSession(sessionName)) {
+    throw new Error(`session ${sessionName} not found`);
+  }
+  if (!ensureManagedSession(sessionName)) {
+    throw new Error(`session ${sessionName} is not managed by TerminalX`);
+  }
+
+  const chatId = ctxChatId();
+  if (!chatId) {
+    throw new Error("no Telegram forum chat configured");
+  }
+  await setForumChatId(chatId);
+
+  const b = botForTopicManagement();
+  if (!b) {
+    throw new Error("Telegram bot is not configured");
+  }
+
+  const existing = getTopicByName(sessionName);
+  if (existing) {
+    const reconciled = await reconcileTopicBinding(existing);
+    const nextViewMode = viewMode ?? reconciled.viewMode ?? defaultViewMode(reconciled.kind);
+    const binding = {
+      ...reconciled,
+      viewMode: nextViewMode,
+      endedAtMs: undefined,
+    };
+    await setTopic(binding);
+    resetChatBaseline(binding.topicId);
+    startStreamer(b, binding.topicId);
+    if (viewMode === "screen") snap(b, binding.topicId);
+    return {
+      topic: {
+        topicId: binding.topicId,
+        sessionName,
+        viewMode: nextViewMode,
+        url: topicLink(chatId, binding.topicId),
+        created: false,
+      },
+    };
+  }
+
+  const maxTopics = topicQuotaReached();
+  if (maxTopics !== null) {
+    throw new Error(`maximum number of Telegram topics reached (${maxTopics})`);
+  }
+
+  const topic = await b.api.createForumTopic(chatId, sessionName);
+  const defaults = sessionBindingDefaults(sessionName);
+  const nextViewMode = viewMode ?? defaultViewMode(defaults.kind);
+  await attachToTopic(b, identity, {
+    topicId: topic.message_thread_id,
+    sessionName,
+    ...defaults,
+    viewMode: nextViewMode,
+  });
+  return {
+    topic: {
+      topicId: topic.message_thread_id,
+      sessionName,
+      viewMode: nextViewMode,
+      url: topicLink(chatId, topic.message_thread_id),
+      created: true,
+    },
+  };
+}
+
 function ctxChatId(): number | null {
   return getTelegramForumChatId();
 }
@@ -253,7 +354,7 @@ async function handleStart(ctx: Context) {
       "  • text → stdin",
       "  • reply with a file → upload to session cwd",
       "  • /snap, /detach, /kill, /delete, /get <relpath>",
-      "  • /view [screen|chat] — toggle pinned-screen vs message-stream view",
+      "  • /view [chat|screen|off] — control session responses in this topic",
       "  • inline keyboard: ^C ^D Tab ↵ arrows scroll snap view detach kill",
     ].join("\n")
   );
@@ -262,8 +363,9 @@ async function handleStart(ctx: Context) {
 async function handleSessions(ctx: Context) {
   const identity = await gate(ctx);
   if (!identity) return;
-  const all = listSessions().filter((s) =>
-    canAccessSession(identity.username, identity.role, s.name)
+  const all = listSessions().filter(
+    (s) =>
+      canAccessSession(identity.username, identity.role, s.name) && ensureManagedSession(s.name)
   );
   if (all.length === 0) {
     await reply(ctx, "no sessions. the box is lonely.");
@@ -302,7 +404,7 @@ async function handleNew(ctx: Context) {
   const cmd = commandForKind(kind);
   try {
     createSession(scoped, cmd ?? undefined, cwd);
-    await saveMeta({ name: scoped, kind, createdAt: new Date().toISOString() });
+    await saveMeta({ name: scoped, kind, createdAt: new Date().toISOString(), managed: true });
   } catch (err) {
     await reply(ctx, `failed to create: ${(err as Error).message}`);
     return;
@@ -352,6 +454,10 @@ async function handleAttachByName(ctx: Context, name: string) {
   }
   if (!hasSession(name)) {
     await reply(ctx, `session ${name} not found.`);
+    return;
+  }
+  if (!ensureManagedSession(name)) {
+    await reply(ctx, "refusing to attach a tmux session not managed by TerminalX.");
     return;
   }
   const chatId = ctxChatId();
@@ -410,6 +516,10 @@ async function handleKill(ctx: Context) {
   }
   if (!canAccessSession(identity.username, identity.role, target)) {
     await reply(ctx, "session not yours.");
+    return;
+  }
+  if (!ensureManagedSession(target)) {
+    await reply(ctx, "refusing to kill a tmux session not managed by TerminalX.");
     return;
   }
   try {
@@ -481,11 +591,12 @@ async function handleSnap(ctx: Context) {
   snap(bot, topicId);
 }
 
-async function toggleView(topicId: number): Promise<"screen" | "chat"> {
+async function toggleView(topicId: number): Promise<"screen" | "chat" | "off"> {
   const binding = getTopic(topicId);
   if (!binding) return "screen";
   const current = binding.viewMode ?? defaultViewMode(binding.kind);
-  const next: "screen" | "chat" = current === "screen" ? "chat" : "screen";
+  const next: "screen" | "chat" | "off" =
+    current === "chat" ? "screen" : current === "screen" ? "off" : "chat";
   await patchTopic(topicId, { viewMode: next });
   // Reset baseline so chat mode doesn't dump the entire screen on switch.
   resetChatBaseline(topicId);
@@ -501,7 +612,7 @@ async function handleView(ctx: Context) {
   const binding = await topicBindingForMessage(ctx, identity, topicId);
   if (!binding) return;
   const arg = (ctx.message?.text?.split(/\s+/)[1] ?? "").toLowerCase();
-  if (arg === "screen" || arg === "chat") {
+  if (arg === "screen" || arg === "chat" || arg === "off") {
     await patchTopic(topicId, { viewMode: arg });
     resetChatBaseline(topicId);
     await reply(ctx, `view: ${arg}`);
@@ -625,7 +736,13 @@ async function handleText(ctx: Context) {
   // take many seconds to land via the JSONL transcript. Ack the input
   // right away so the user knows the bot received it instead of staring
   // at silence.
-  if (mode === "chat" && (binding.kind !== "bash" || isPaneTui(binding.sessionName))) {
+  if (mode === "off") {
+    try {
+      await reply(ctx, "input sent · responses off. /view chat or /view screen to resume.");
+    } catch {
+      /* ignore */
+    }
+  } else if (mode === "chat" && (binding.kind !== "bash" || isPaneTui(binding.sessionName))) {
     try {
       await reply(ctx, "📩 received · processing…");
     } catch {
@@ -680,6 +797,10 @@ async function handleCallback(ctx: Context) {
     if (await rejectReadOnly(ctx)) return;
     const name = data.slice(CB.KILL_PREFIX.length);
     if (!canAccessSession(identity.username, identity.role, name)) return;
+    if (!ensureManagedSession(name)) {
+      await reply(ctx, "refusing to kill a tmux session not managed by TerminalX.");
+      return;
+    }
     try {
       killSession(name);
     } catch {
@@ -764,6 +885,10 @@ async function handleCallback(ctx: Context) {
       await reply(ctx, "detached.");
       return;
     case CB.KILL:
+      if (!ensureManagedSession(session)) {
+        await reply(ctx, "refusing to kill a tmux session not managed by TerminalX.");
+        return;
+      }
       try {
         killSession(session);
       } catch {
@@ -790,7 +915,7 @@ async function handleCallback(ctx: Context) {
 
 export async function startTelegramBot(): Promise<Bot | null> {
   if (!botIsConfigured()) {
-    if (process.env.TERMINALX_TELEGRAM_BOT_TOKEN || telegramAllowedUserCount() > 0) {
+    if (telegramHasPartialConfig() || telegramAllowedUserCount() > 0) {
       console.error(
         "[telegram] bot disabled: token, allowed users, and valid forum chat id are required"
       );
@@ -798,7 +923,8 @@ export async function startTelegramBot(): Promise<Bot | null> {
     return null;
   }
   if (bot) return bot;
-  const token = process.env.TERMINALX_TELEGRAM_BOT_TOKEN!;
+  const config = getTelegramConfig();
+  const token = config.botToken;
   bot = new Bot(token);
 
   // commands
@@ -835,8 +961,8 @@ export async function startTelegramBot(): Promise<Bot | null> {
   await setForumChatId(forumChatId);
 
   // webhook setup
-  const webhookUrl = process.env.TERMINALX_TELEGRAM_WEBHOOK_URL;
-  const secret = process.env.TERMINALX_TELEGRAM_WEBHOOK_SECRET;
+  const webhookUrl = config.webhookUrl;
+  const secret = config.webhookSecret;
   if (!webhookUrl || !secret) {
     console.error("[telegram] webhook url / secret missing — bot won't receive updates");
     return bot;
@@ -929,6 +1055,11 @@ export async function stopTelegramBot(): Promise<void> {
     /* ignore */
   }
   bot = null;
+}
+
+export async function restartTelegramBot(): Promise<Bot | null> {
+  await stopTelegramBot();
+  return startTelegramBot();
 }
 
 export function getBot(): Bot | null {

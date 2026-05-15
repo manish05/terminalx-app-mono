@@ -8,7 +8,7 @@ import type { SessionKind } from "@/lib/ai-sessions";
  * Survives server restarts so reattaching after a deploy doesn't lose
  * topic ↔ session mapping.
  */
-export type ViewMode = "screen" | "chat";
+export type ViewMode = "screen" | "chat" | "off";
 
 export interface TopicBinding {
   topicId: number;

@@ -10,6 +10,7 @@ export interface TmuxSession {
 }
 
 const TMUX_BIN = "tmux";
+const TERMINALX_MANAGED_OPTION = "@terminalx_managed";
 
 /**
  * Capture the last N lines of a session's scrollback as a single chunk,
@@ -194,6 +195,35 @@ export function createSession(name: string, command?: string, cwd?: string): voi
     args.push(command);
   }
   execFileSync(TMUX_BIN, args, {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+  execFileSync(
+    TMUX_BIN,
+    ["set-option", "-t", tmuxTarget(safeName), TERMINALX_MANAGED_OPTION, "1"],
+    {
+      encoding: "utf-8",
+      timeout: 5000,
+    }
+  );
+}
+
+export function isTerminalXMarkedSession(name: string): boolean {
+  const target = tmuxTarget(name);
+  try {
+    const out = execFileSync(
+      TMUX_BIN,
+      ["display-message", "-p", "-t", target, `#{${TERMINALX_MANAGED_OPTION}}`],
+      { encoding: "utf-8", timeout: 2000 }
+    );
+    return out.trim() === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markTerminalXSession(name: string): void {
+  execFileSync(TMUX_BIN, ["set-option", "-t", tmuxTarget(name), TERMINALX_MANAGED_OPTION, "1"], {
     encoding: "utf-8",
     timeout: 5000,
   });
