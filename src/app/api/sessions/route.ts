@@ -16,6 +16,7 @@ import { botIsConfigured, type BotIdentity } from "@/lib/telegram/auth";
 import { ensureTopicForSession } from "@/lib/telegram/bot";
 import { getConfiguredMaxSessions } from "@/lib/security-config";
 import { assertNotSensitivePath, resolveSafePath } from "@/lib/file-service";
+import { createGitWorktreeForSession, removeGitWorktree } from "@/lib/git-worktree";
 
 function resolveSessionStartDir(requestedCwd: unknown): string {
   const requested =
@@ -64,6 +65,7 @@ export async function GET(req: NextRequest) {
         ...s,
         kind: meta?.kind ?? "bash",
         cwd: meta?.cwd ?? s.activePath,
+        worktree: meta?.worktree,
         managed: ensureManagedSession(s.name),
         telegram: telegram
           ? {
@@ -92,7 +94,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { name, kind, dangerouslySkipPermissions, cwd } = body;
+    const { name, kind, dangerouslySkipPermissions, cwd, worktree } = body;
 
     if (!name || typeof name !== "string") {
       return NextResponse.json({ error: "Missing or invalid session name" }, { status: 400 });
@@ -131,15 +133,35 @@ export async function POST(req: NextRequest) {
     });
 
     let startDir: string;
+    let createdWorktree:
+      | {
+          repoRoot: string;
+          worktreePath: string;
+          startDir: string;
+          branch: string;
+        }
+      | undefined;
     try {
       startDir = resolveSessionStartDir(cwd);
+      if (worktree?.create === true) {
+        createdWorktree = createGitWorktreeForSession(startDir, worktree.branch);
+        startDir = createdWorktree.startDir;
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const { error, status } = directoryErrorResponse(message);
-      return NextResponse.json({ error }, { status });
+      return NextResponse.json({ error: worktree?.create === true ? message : error }, { status });
     }
 
-    createSession(finalName, command ?? undefined, startDir);
+    try {
+      createSession(finalName, command ?? undefined, startDir);
+    } catch (err) {
+      if (createdWorktree) {
+        removeGitWorktree(createdWorktree.worktreePath, createdWorktree.repoRoot);
+      }
+      throw err;
+    }
+
     await saveMeta({
       name: finalName,
       kind: sessionKind,
@@ -147,6 +169,13 @@ export async function POST(req: NextRequest) {
       createdBy: username || undefined,
       managed: true,
       cwd: startDir,
+      worktree: createdWorktree
+        ? {
+            repoRoot: createdWorktree.repoRoot,
+            path: createdWorktree.worktreePath,
+            branch: createdWorktree.branch,
+          }
+        : undefined,
     });
     let telegramTopic: {
       topicId: number;
@@ -173,7 +202,20 @@ export async function POST(req: NextRequest) {
       detail: `${finalName} (${sessionKind})`,
     });
     return NextResponse.json(
-      { success: true, name: finalName, kind: sessionKind, cwd: startDir, telegram: telegramTopic },
+      {
+        success: true,
+        name: finalName,
+        kind: sessionKind,
+        cwd: startDir,
+        worktree: createdWorktree
+          ? {
+              repoRoot: createdWorktree.repoRoot,
+              path: createdWorktree.worktreePath,
+              branch: createdWorktree.branch,
+            }
+          : undefined,
+        telegram: telegramTopic,
+      },
       { status: 201 }
     );
   } catch (err) {

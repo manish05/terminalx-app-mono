@@ -9,6 +9,7 @@ import {
   Copy,
   Folder,
   FolderOpen,
+  GitBranch,
   Plus,
   RefreshCw,
   Sparkles,
@@ -43,6 +44,13 @@ interface DirectoryEntry {
   path: string;
 }
 
+interface GitDirectoryInfo {
+  isRepo: boolean;
+  root?: string;
+  branch?: string;
+  repoName?: string;
+}
+
 function parentDirectory(path: string, root: string): string {
   if (!path || path === root) return root || ".";
   const trimmed = path.replace(/\/+$/, "");
@@ -51,6 +59,23 @@ function parentDirectory(path: string, root: string): string {
   const parent = trimmed.slice(0, idx);
   if (root && parent !== root && !parent.startsWith(`${root}/`)) return root;
   return parent || root || ".";
+}
+
+function defaultBranchName(sessionName: string): string {
+  return sessionName ? `feature/${sessionName}` : "feature/";
+}
+
+function branchLooksValid(branch: string): boolean {
+  const trimmed = branch.trim();
+  return Boolean(
+    trimmed &&
+    trimmed.length <= 200 &&
+    /^[A-Za-z0-9._/-]+$/.test(trimmed) &&
+    !trimmed.startsWith("-") &&
+    !trimmed.includes("..") &&
+    !trimmed.includes("//") &&
+    !trimmed.endsWith("/")
+  );
 }
 
 function SessionRow({
@@ -167,6 +192,9 @@ export function DashboardView() {
   const [directoryEntries, setDirectoryEntries] = useState<DirectoryEntry[]>([]);
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
+  const [gitInfo, setGitInfo] = useState<GitDirectoryInfo>({ isRepo: false });
+  const [createWorktree, setCreateWorktree] = useState(false);
+  const [worktreeBranch, setWorktreeBranch] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -188,8 +216,16 @@ export function DashboardView() {
       setDirectoryRoot(data.root ?? "");
       setDirectoryInput(data.path ?? ".");
       setDirectoryEntries((data.entries ?? []) as DirectoryEntry[]);
+      const nextGitInfo = (data.git ?? { isRepo: false }) as GitDirectoryInfo;
+      setGitInfo(nextGitInfo);
+      if (!nextGitInfo.isRepo) {
+        setCreateWorktree(false);
+        setWorktreeBranch("");
+      }
     } catch (err) {
       setDirectoryError(err instanceof Error ? err.message : "Failed to list directories");
+      setGitInfo({ isRepo: false });
+      setCreateWorktree(false);
     } finally {
       setDirectoryLoading(false);
     }
@@ -204,6 +240,9 @@ export function DashboardView() {
     setDirectoryInput(".");
     setDirectoryEntries([]);
     setDirectoryError(null);
+    setGitInfo({ isRepo: false });
+    setCreateWorktree(false);
+    setWorktreeBranch("");
     setCreateError(null);
     setShowDialog(true);
     void loadDirectories(".");
@@ -229,10 +268,15 @@ export function DashboardView() {
     if (!/^[a-zA-Z0-9_.\-]+$/.test(n)) return setCreateError("only letters, numbers, _ - .");
     if (sessions.some((s) => s.name === n)) return setCreateError("name already exists");
     if (!directoryPath || directoryError) return setCreateError("select a valid directory");
+    const branch = worktreeBranch.trim();
+    if (createWorktree && !branchLooksValid(branch)) {
+      return setCreateError("enter a valid branch name");
+    }
     setCreateError(null);
     const session = await createSession(n, kind, {
       dangerouslySkipPermissions: kind === "claude" ? skipPermissions : undefined,
       cwd: directoryPath,
+      worktree: createWorktree ? { create: true, branch } : undefined,
     });
     if (session) {
       setShowDialog(false);
@@ -244,6 +288,8 @@ export function DashboardView() {
     skipPermissions,
     directoryPath,
     directoryError,
+    createWorktree,
+    worktreeBranch,
     sessions,
     createSession,
     router,
@@ -373,7 +419,11 @@ export function DashboardView() {
               ref={inputRef}
               value={name}
               onChange={(e) => {
-                setName(e.target.value.replace(/[^A-Za-z0-9 ]/g, ""));
+                const nextName = e.target.value.replace(/[^A-Za-z0-9 ]/g, "");
+                setName(nextName);
+                if (createWorktree && (!worktreeBranch.trim() || worktreeBranch === "feature/")) {
+                  setWorktreeBranch(defaultBranchName(slugify(nextName)));
+                }
                 setCreateError(null);
               }}
               onKeyDown={(e) => {
@@ -502,6 +552,56 @@ export function DashboardView() {
                 </code>
               </div>
             </div>
+
+            {gitInfo.isRepo && (
+              <div className="mt-3 rounded border border-[#1a1d24] bg-[#07080c] p-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <GitBranch size={13} className="shrink-0 text-[#00cc6e]" />
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-[#a8b3a6]">
+                    {gitInfo.repoName ?? "git repository"}
+                    {gitInfo.branch ? ` · ${gitInfo.branch}` : ""}
+                  </span>
+                </div>
+                <label className="mt-2 flex items-center gap-2 text-[11px] text-[#e6f0e4] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={createWorktree}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setCreateWorktree(checked);
+                      if (checked && !worktreeBranch.trim()) {
+                        setWorktreeBranch(defaultBranchName(preview));
+                      }
+                      setCreateError(null);
+                    }}
+                    className="accent-[#00cc6e] cursor-pointer"
+                  />
+                  create Git worktree for this session
+                </label>
+                {createWorktree && (
+                  <div className="mt-2">
+                    <input
+                      value={worktreeBranch}
+                      onChange={(e) => {
+                        setWorktreeBranch(e.target.value);
+                        setCreateError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleCreate();
+                        if (e.key === "Escape") setShowDialog(false);
+                      }}
+                      placeholder={defaultBranchName(preview)}
+                      className="w-full px-2 py-1.5 rounded bg-[#0f1117] border border-[#252933]
+                        text-[#e6f0e4] text-[12px] placeholder:text-[#6b7569]/50 font-mono
+                        focus:outline-none focus:border-[#00ff88] transition-colors"
+                    />
+                    <p className="mt-1 text-[10px] text-[#6b7569] leading-tight">
+                      starts from the selected repo HEAD and opens the new session in that worktree.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {kind === "claude" && (
               <label

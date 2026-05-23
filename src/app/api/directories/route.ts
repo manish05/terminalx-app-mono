@@ -6,6 +6,7 @@ import {
   listDirectory,
   resolveSafePath,
 } from "@/lib/file-service";
+import { getGitDirectoryInfo } from "@/lib/git-worktree";
 import { getUserScoping } from "@/lib/session-scope";
 
 export async function GET(req: NextRequest) {
@@ -27,6 +28,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       path: safePath,
       root: getTerminusRoot(),
+      git: getGitDirectoryInfo(safePath),
       entries: listDirectory(safePath).filter((entry) => entry.type === "directory"),
     });
   } catch (err) {

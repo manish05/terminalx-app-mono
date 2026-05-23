@@ -13,6 +13,11 @@ export interface TmuxSession {
   lastActivity?: string;
   activePath?: string;
   cwd?: string;
+  worktree?: {
+    repoRoot: string;
+    path: string;
+    branch: string;
+  };
   kind?: SessionKind;
   managed?: boolean;
   telegram?: {
@@ -25,6 +30,10 @@ export interface TmuxSession {
 export interface CreateSessionOptions {
   dangerouslySkipPermissions?: boolean;
   cwd?: string;
+  worktree?: {
+    create: boolean;
+    branch?: string;
+  };
 }
 
 interface UseSessionsReturn {
@@ -76,6 +85,7 @@ export function useSessions(): UseSessionsReturn {
             kind,
             dangerouslySkipPermissions: options.dangerouslySkipPermissions,
             cwd: options.cwd,
+            worktree: options.worktree,
           }),
         });
         if (!res.ok) {

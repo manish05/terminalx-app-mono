@@ -12,6 +12,11 @@ export interface SessionMeta {
   createdBy?: string;
   managed?: boolean;
   cwd?: string;
+  worktree?: {
+    repoRoot: string;
+    path: string;
+    branch: string;
+  };
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");

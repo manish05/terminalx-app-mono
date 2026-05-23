@@ -10,6 +10,7 @@ One URL replaces your daily SSH workflow.
 ## Features
 
 - **Tabbed Terminals** — Multiple tmux sessions in browser tabs with persistent state
+- **Git Worktrees** — Start a session from a selected Git repo and optionally create a new branch worktree for parallel feature work
 - **Dual Terminal Engines** — Toggle between xterm.js (default) and wterm (DOM-rendered, native Find-in-Page + selection)
 - **AI CLI Sessions** — Spawn `claude` or `codex` CLI inside a persistent tmux session; your subscription, your PATH
 - **Playground** — Zero-backend sandbox with an in-browser Bash running on WebAssembly (`@wterm/just-bash`)
@@ -104,23 +105,24 @@ TerminalX runs **directly on your server** via node-pty + tmux. No SSH tunneling
 
 All settings via environment variables. See [`.env.example`](.env.example) for the full list.
 
-| Variable                         | Default                | Description                                                                                                          |
-| -------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                           | `3000`                 | Server port                                                                                                          |
-| `TERMINUS_HOST`                  | `127.0.0.1`            | Bind host. Use `0.0.0.0` only with authentication or an explicit trusted-network setup                               |
-| `TERMINUS_ROOT`                  | `$HOME`                | File browser root                                                                                                    |
-| `TERMINUS_SHELL`                 | `$SHELL`               | Default shell                                                                                                        |
-| `TERMINUS_READ_ONLY`             | `false`                | Read-only mode (disables terminal, uploads, session management)                                                      |
-| `TERMINUS_MAX_SESSIONS`          | `20`                   | Max terminal sessions                                                                                                |
-| `TERMINUS_SCROLLBACK`            | `10000`                | tmux scrollback history lines                                                                                        |
-| `TERMINUS_LOG_PATHS`             | `/var/log,~/.pm2/logs` | Log directories to scan                                                                                              |
-| `TERMINUS_RECORD_SESSIONS`       | `false`                | Record every PTY session to `data/recordings/*.jsonl` for replay (⚠ captures everything you type, including secrets) |
-| `TERMINALX_AUTH_MODE`            | `local`                | Auth mode: `local`, `password`, or `google`. `none` is refused at startup                                            |
-| `TERMINALX_PUBLIC_URL`           | —                      | Canonical external URL for OAuth and redirects behind a proxy                                                        |
-| `TERMINALX_TRUST_PROXY_HEADERS`  | `false`                | Trust `X-Forwarded-*` headers only when a trusted proxy overwrites them                                              |
-| `TERMINALX_GOOGLE_CLIENT_ID`     | —                      | Google OAuth client ID (when `AUTH_MODE=google`)                                                                     |
-| `TERMINALX_GOOGLE_CLIENT_SECRET` | —                      | Google OAuth client secret                                                                                           |
-| `TERMINALX_ALLOWED_EMAILS`       | —                      | Comma-separated allowlist of Google emails; empty denies everyone                                                    |
+| Variable                         | Default                               | Description                                                                                                          |
+| -------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                           | `3000`                                | Server port                                                                                                          |
+| `TERMINUS_HOST`                  | `127.0.0.1`                           | Bind host. Use `0.0.0.0` only with authentication or an explicit trusted-network setup                               |
+| `TERMINUS_ROOT`                  | `$HOME`                               | File browser root                                                                                                    |
+| `TERMINALX_WORKTREES_ROOT`       | `$TERMINUS_ROOT/.terminalx-worktrees` | Generated Git worktree directory; must remain under `TERMINUS_ROOT`                                                  |
+| `TERMINUS_SHELL`                 | `$SHELL`                              | Default shell                                                                                                        |
+| `TERMINUS_READ_ONLY`             | `false`                               | Read-only mode (disables terminal, uploads, session management)                                                      |
+| `TERMINUS_MAX_SESSIONS`          | `20`                                  | Max terminal sessions                                                                                                |
+| `TERMINUS_SCROLLBACK`            | `10000`                               | tmux scrollback history lines                                                                                        |
+| `TERMINUS_LOG_PATHS`             | `/var/log,~/.pm2/logs`                | Log directories to scan                                                                                              |
+| `TERMINUS_RECORD_SESSIONS`       | `false`                               | Record every PTY session to `data/recordings/*.jsonl` for replay (⚠ captures everything you type, including secrets) |
+| `TERMINALX_AUTH_MODE`            | `local`                               | Auth mode: `local`, `password`, or `google`. `none` is refused at startup                                            |
+| `TERMINALX_PUBLIC_URL`           | —                                     | Canonical external URL for OAuth and redirects behind a proxy                                                        |
+| `TERMINALX_TRUST_PROXY_HEADERS`  | `false`                               | Trust `X-Forwarded-*` headers only when a trusted proxy overwrites them                                              |
+| `TERMINALX_GOOGLE_CLIENT_ID`     | —                                     | Google OAuth client ID (when `AUTH_MODE=google`)                                                                     |
+| `TERMINALX_GOOGLE_CLIENT_SECRET` | —                                     | Google OAuth client secret                                                                                           |
+| `TERMINALX_ALLOWED_EMAILS`       | —                                     | Comma-separated allowlist of Google emails; empty denies everyone                                                    |
 
 ## Authentication
 
