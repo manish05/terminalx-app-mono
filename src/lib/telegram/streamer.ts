@@ -9,6 +9,7 @@ import {
   tmuxTarget,
 } from "@/lib/tmux";
 import { renderScreen, stripAnsi } from "./render";
+import { extractSelectionPrompt } from "./selection-prompt";
 import { attachedKeyboard } from "./keyboard";
 import { getTopic, listTopics, patchTopic, getForumChatId, type ViewMode } from "./state";
 import { startClaudeTranscript, isClaudeTranscriptRunning } from "./claude-transcript";
@@ -36,6 +37,8 @@ interface RuntimeState {
   tuiHinted: boolean;
   /** First time this topic's pane was observed running Claude manually. */
   claudeDetectedAtMs?: number;
+  /** Signature of the last interactive selection prompt we surfaced (dedup). */
+  lastPromptSignature?: string;
 }
 
 /** Default view mode for a freshly-attached topic. */
@@ -235,6 +238,27 @@ async function flushChat(
   const isCodexCli = binding?.kind === "codex" || foreground === "codex";
   const knownTui = isClaudeCli || isCodexCli;
   if (knownTui || isPaneTui(sessionName)) {
+    // Surface an interactive selection prompt (Claude / Codex waiting on a
+    // menu). These live only in the TUI — Claude writes the AskUserQuestion
+    // tool_use to its JSONL only after the user answers — so without this the
+    // chat-mode user never learns a decision is blocking the session. Dedup by
+    // signature so navigating the cursor doesn't resend, and clear it when the
+    // prompt is gone so the next one is announced.
+    const prompt = extractSelectionPrompt(stripAnsi(ansi));
+    if (prompt) {
+      if (prompt.signature !== rt.lastPromptSignature) {
+        rt.lastPromptSignature = prompt.signature;
+        try {
+          await bot.api.sendMessage(chatId, prompt.text, { message_thread_id: topicId });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error("[telegram/streamer] selection prompt send failed:", msg);
+        }
+      }
+    } else {
+      rt.lastPromptSignature = undefined;
+    }
+
     // Claude and Codex each write per-session JSONL transcripts. Other TUIs
     // do not have a topic-safe source, so we stay quiet for those in chat mode.
     if (isClaudeCli && !isClaudeTranscriptRunning(topicId)) {
@@ -354,6 +378,7 @@ export function startStreamer(bot: Bot, topicId: number): void {
     lastSentText: "",
     lastFlushAt: 0,
     tuiHinted: false,
+    lastPromptSignature: undefined,
     flushTimer: setInterval(() => {
       void renderAndFlush(bot, topicId);
     }, FLUSH_INTERVAL_MS),
