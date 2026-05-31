@@ -12,7 +12,12 @@ import { renderScreen, stripAnsi } from "./render";
 import { extractSelectionPrompt } from "./selection-prompt";
 import { attachedKeyboard } from "./keyboard";
 import { getTopic, listTopics, patchTopic, getForumChatId, type ViewMode } from "./state";
-import { startClaudeTranscript, isClaudeTranscriptRunning } from "./claude-transcript";
+import {
+  startClaudeTranscript,
+  isClaudeTranscriptRunning,
+  stopClaudeTranscript,
+  findLiveReplacementJsonl,
+} from "./claude-transcript";
 import { startCodexTranscript, isCodexTranscriptRunning } from "./codex-transcript";
 
 const FLUSH_INTERVAL_MS = 5000;
@@ -261,6 +266,18 @@ async function flushChat(
 
     // Claude and Codex each write per-session JSONL transcripts. Other TUIs
     // do not have a topic-safe source, so we stay quiet for those in chat mode.
+
+    // If Claude was restarted inside the same tmux session the bound JSONL is
+    // now frozen and a fresh one is being written. Drop any watcher stuck on
+    // the dead file and seed the next start with the live replacement.
+    const liveReplacement =
+      isClaudeCli && binding?.jsonlPath
+        ? findLiveReplacementJsonl(topicId, binding.jsonlPath)
+        : null;
+    if (liveReplacement && isClaudeTranscriptRunning(topicId)) {
+      stopClaudeTranscript(topicId);
+    }
+
     if (isClaudeCli && !isClaudeTranscriptRunning(topicId)) {
       if (foreground === "claude" && !rt.claudeDetectedAtMs) {
         rt.claudeDetectedAtMs = Date.now() - FLUSH_INTERVAL_MS - 5000;
@@ -274,12 +291,16 @@ async function flushChat(
         cwd: binding?.cwd,
         sinceMs,
         promptText: binding?.pendingPrompt,
-        persistedJsonl: binding?.jsonlPath,
-        initialOffset: binding?.jsonlOffset,
+        // After detecting a stale binding, hand the resolver the live file
+        // directly so it falls through to it even if promptText resolution
+        // can't lock onto the new JSONL yet.
+        persistedJsonl: liveReplacement ?? binding?.jsonlPath,
+        initialOffset: liveReplacement ? undefined : binding?.jsonlOffset,
       });
       if (started) {
         await patchTopic(topicId, {
           jsonlPath: started.jsonl,
+          ...(liveReplacement ? { jsonlOffset: undefined } : {}),
           pendingPrompt: undefined,
           lastPromptAtMs: undefined,
         });

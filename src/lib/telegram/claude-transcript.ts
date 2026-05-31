@@ -4,6 +4,7 @@ import * as os from "os";
 import type { Bot } from "grammy";
 import { watch, FSWatcher } from "chokidar";
 import { escapeMarkdownV2 } from "./render";
+import { listTopics } from "./state";
 
 interface AssistantEntry {
   type: "assistant";
@@ -407,6 +408,66 @@ export function startClaudeTranscript(
       watchers.delete(topicId);
     },
   };
+}
+
+/**
+ * When Claude Code is restarted inside the same tmux session — the user
+ * typed `/exit` or hit Ctrl-D and ran `claude` again — it starts a new
+ * session id and therefore writes to a brand-new JSONL file. The bound
+ * one is left frozen, and a watcher still tailing it silently black-holes
+ * every later assistant message.
+ *
+ * Claude doesn't keep the JSONL open as a long-lived fd (open-append-close
+ * per write), so `/proc/<pid>/fd` reveals nothing. The strongest signal we
+ * have is mtime: if an unclaimed sibling in the same project dir was
+ * written *to* meaningfully later than the bound one AND has been touched
+ * in the recent past, it is the live file and the bound one is stale.
+ *
+ * Returns the replacement path, or null when the bound file still looks live.
+ * Conservative on purpose — a false rotation is worse than a missed one.
+ */
+export function findLiveReplacementJsonl(topicId: number, currentJsonlPath: string): string | null {
+  const STALE_GAP_MS = 60_000;
+  const RECENT_ACTIVITY_MS = 5 * 60 * 1000;
+  let boundMtime: number;
+  try {
+    boundMtime = fs.statSync(currentJsonlPath).mtimeMs;
+  } catch {
+    return null;
+  }
+  const now = Date.now();
+  const dir = path.dirname(currentJsonlPath);
+  // Exclude JSONLs in use by ANOTHER topic — both ones with a running watcher
+  // and ones merely *bound* on disk. At boot the watchers map fills in one
+  // topic at a time, so an in-memory check alone races with the resume loop
+  // and can wrongly rotate into a sibling topic's file before its watcher has
+  // been registered.
+  const exclude = claimedJsonls(topicId);
+  for (const t of listTopics()) {
+    if (t.topicId === topicId) continue;
+    if (t.jsonlPath) exclude.add(t.jsonlPath);
+  }
+  let bestPath: string | null = null;
+  let bestMtime = -Infinity;
+  try {
+    for (const entry of fs.readdirSync(dir)) {
+      if (!entry.endsWith(".jsonl")) continue;
+      const p = path.join(dir, entry);
+      if (p === currentJsonlPath || exclude.has(p)) continue;
+      try {
+        const m = fs.statSync(p).mtimeMs;
+        if (m > boundMtime + STALE_GAP_MS && now - m < RECENT_ACTIVITY_MS && m > bestMtime) {
+          bestPath = p;
+          bestMtime = m;
+        }
+      } catch {
+        /* skip unreadable */
+      }
+    }
+  } catch {
+    /* skip unreadable dir */
+  }
+  return bestPath;
 }
 
 export function stopClaudeTranscript(topicId: number): void {
