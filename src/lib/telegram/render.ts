@@ -70,6 +70,83 @@ export function renderScreen(ansi: string, max = 3500): string {
 }
 
 /**
+ * Convert standard markdown (what Claude / Codex emit) into Telegram
+ * MarkdownV2 so replies keep their formatting in chat mode instead of
+ * showing literal `**` / backticks (escape-everything) or losing the
+ * monospace styling (no parse_mode).
+ *
+ * Handled: fenced code blocks (with language tag), inline code, bold,
+ * italic, strikethrough, links, ATX headers (→ bold line), blockquotes,
+ * and `-`/`*`/`+` bullets (→ •). Everything else is escaped. Callers must
+ * still keep a plain-text fallback — Telegram rejects the whole message
+ * on any entity-parse error.
+ */
+export function markdownToTelegramV2(md: string): string {
+  const out: string[] = [];
+  const lines = md.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const fence = lines[i]!.match(/^\s*(```|~~~)\s*([\w+#.-]*)\s*$/);
+    if (fence) {
+      const close = fence[1]!;
+      const body: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && !lines[j]!.trim().startsWith(close)) {
+        body.push(lines[j]!);
+        j++;
+      }
+      out.push("```" + (fence[2] ?? "") + "\n" + escapeMarkdownV2Code(body.join("\n")) + "\n```");
+      i = j + 1; // also skips an unclosed fence's implicit end
+      continue;
+    }
+    out.push(lineToTelegramV2(lines[i]!));
+    i++;
+  }
+  return out.join("\n");
+}
+
+function lineToTelegramV2(line: string): string {
+  const header = line.match(/^\s*#{1,6}\s+(.*)$/);
+  if (header) return "*" + inlineToTelegramV2(header[1]!) + "*";
+  const quote = line.match(/^\s*>\s?(.*)$/);
+  if (quote) return ">" + inlineToTelegramV2(quote[1]!);
+  const bullet = line.match(/^(\s*)[-*+]\s+(.*)$/);
+  if (bullet) return bullet[1]! + "• " + inlineToTelegramV2(bullet[2]!);
+  return inlineToTelegramV2(line);
+}
+
+/**
+ * Inline tokens, longest/most-specific first. Italic deliberately requires
+ * non-word boundaries so snake_case identifiers outside backticks survive.
+ */
+const INLINE_TOKEN =
+  /(`+)([^`]+)\1|\[([^\]]+)\]\(([^()\s]+)\)|\*\*([^*]+(?:\*[^*]+)*?)\*\*|~~([^~]+)~~|(?<![\w\\*])\*(?=\S)([^*]+?)(?<=\S)\*(?!\w)|(?<![\w\\])_(?=\S)([^_]+?)(?<=\S)_(?!\w)/g;
+
+function inlineToTelegramV2(text: string): string {
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(INLINE_TOKEN)) {
+    out += escapeMarkdownV2(text.slice(last, m.index));
+    if (m[2] !== undefined) {
+      out += "`" + escapeMarkdownV2Code(m[2]) + "`";
+    } else if (m[3] !== undefined && m[4] !== undefined) {
+      out += "[" + escapeMarkdownV2(m[3]) + "](" + m[4].replace(/[)\\]/g, (c) => `\\${c}`) + ")";
+    } else if (m[5] !== undefined) {
+      out += "*" + inlineToTelegramV2(m[5]) + "*";
+    } else if (m[6] !== undefined) {
+      out += "~" + inlineToTelegramV2(m[6]) + "~";
+    } else if (m[7] !== undefined) {
+      out += "_" + inlineToTelegramV2(m[7]) + "_";
+    } else if (m[8] !== undefined) {
+      out += "_" + inlineToTelegramV2(m[8]) + "_";
+    }
+    last = m.index + m[0].length;
+  }
+  out += escapeMarkdownV2(text.slice(last));
+  return out;
+}
+
+/**
  * Split a MarkdownV2-formatted message into ≤4096-char chunks, preferring
  * newline boundaries and re-opening / closing code fences across splits so
  * each chunk is independently valid.

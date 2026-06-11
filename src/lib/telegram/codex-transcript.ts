@@ -3,6 +3,7 @@ import * as path from "path";
 import * as os from "os";
 import type { Bot } from "grammy";
 import { watch, FSWatcher } from "chokidar";
+import { markdownToTelegramV2, splitForTelegram } from "./render";
 import { listTopics } from "./state";
 
 interface SessionMetaEntry {
@@ -63,18 +64,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function enqueueSend(bot: Bot, chatId: number, topicId: number, text: string): Promise<void> {
+async function enqueueSend(bot: Bot, chatId: number, topicId: number, raw: string): Promise<void> {
   const prev = sendQueues.get(topicId) ?? Promise.resolve();
   const next = prev.then(async () => {
-    const cool = cooldownUntil.get(topicId) ?? 0;
-    const waitMs = Math.max(0, cool - Date.now());
-    if (waitMs > 0) await sleep(waitMs);
+    const send = async (text: string, parseMode: "MarkdownV2" | undefined) => {
+      const cool = cooldownUntil.get(topicId) ?? 0;
+      const waitMs = Math.max(0, cool - Date.now());
+      if (waitMs > 0) await sleep(waitMs);
+      await bot.api.sendMessage(chatId, text, {
+        message_thread_id: topicId,
+        parse_mode: parseMode,
+      });
+      await sleep(MIN_GAP_MS);
+    };
+    // Formatted first; if Telegram rejects the entities (a converter gap),
+    // fall back to the raw text — losing styling is fine, losing the
+    // message is not.
     try {
-      for (const chunk of chunkText(text, 3900)) {
-        await bot.api.sendMessage(chatId, chunk, {
-          message_thread_id: topicId,
-        });
-        await sleep(MIN_GAP_MS);
+      for (const chunk of splitForTelegram(markdownToTelegramV2(raw), 3900)) {
+        await send(chunk, "MarkdownV2");
+      }
+      return;
+    } catch (err) {
+      const e = err as { error_code?: number; parameters?: { retry_after?: number } };
+      if (e.error_code === 429) {
+        const retry = e.parameters?.retry_after ?? 30;
+        cooldownUntil.set(topicId, Date.now() + (retry + 1) * 1000);
+        return;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[telegram/codex] formatted send failed, retrying plain:", msg);
+    }
+    try {
+      for (const chunk of chunkText(raw, 3900)) {
+        await send(chunk, undefined);
       }
     } catch (err) {
       const e = err as { error_code?: number; parameters?: { retry_after?: number } };

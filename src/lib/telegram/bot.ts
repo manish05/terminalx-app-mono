@@ -65,6 +65,7 @@ import {
   stopAllCodexTranscripts,
   readLastCodexAssistantText,
 } from "./codex-transcript";
+import { markdownToTelegramV2 } from "./render";
 import { downloadFromTelegram, downloadTelegramFileToTemp, sendFromServer } from "./files";
 import { transcribeAudioFile } from "./transcription";
 import { forumTopicExists } from "./topic-health";
@@ -240,18 +241,24 @@ async function attachToTopic(b: Bot, identity: BotIdentity, binding: TopicBindin
   // the most recent assistant message from the topic's JSONL so they
   // immediately have context for what was happening.
   if (mode === "chat" && isPaneTui(binding.sessionName) && resolvedJsonl) {
+    // Both readers return raw markdown. Send it formatted; fall back to the
+    // raw text if Telegram rejects the entities — context beats styling.
     const last =
       resolvedTranscriptKind === "codex"
         ? readLastCodexAssistantText(resolvedJsonl)
         : readLastAssistantText(resolvedJsonl);
     if (last) {
       try {
-        await b.api.sendMessage(chatId, last, {
+        await b.api.sendMessage(chatId, markdownToTelegramV2(last), {
           message_thread_id: binding.topicId,
-          ...(resolvedTranscriptKind === "codex" ? {} : { parse_mode: "MarkdownV2" as const }),
+          parse_mode: "MarkdownV2",
         });
       } catch {
-        /* ignore */
+        try {
+          await b.api.sendMessage(chatId, last, { message_thread_id: binding.topicId });
+        } catch {
+          /* ignore */
+        }
       }
     }
   }

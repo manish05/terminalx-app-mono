@@ -3,7 +3,7 @@ import * as path from "path";
 import * as os from "os";
 import type { Bot } from "grammy";
 import { watch, FSWatcher } from "chokidar";
-import { escapeMarkdownV2 } from "./render";
+import { markdownToTelegramV2, splitForTelegram } from "./render";
 import { listTopics } from "./state";
 
 interface AssistantEntry {
@@ -52,24 +52,27 @@ const cooldownUntil = new Map<number, number>();
 
 const MIN_GAP_MS = 1100;
 
-async function enqueueSend(
-  bot: Bot,
-  chatId: number,
-  topicId: number,
-  text: string,
-  parseMode: "MarkdownV2" | undefined
-): Promise<void> {
+async function enqueueSend(bot: Bot, chatId: number, topicId: number, raw: string): Promise<void> {
   const prev = sendQueues.get(topicId) ?? Promise.resolve();
   const next = prev.then(async () => {
-    const cool = cooldownUntil.get(topicId) ?? 0;
-    const waitMs = Math.max(0, cool - Date.now());
-    if (waitMs > 0) await sleep(waitMs);
-    try {
+    const send = async (text: string, parseMode: "MarkdownV2" | undefined) => {
+      const cool = cooldownUntil.get(topicId) ?? 0;
+      const waitMs = Math.max(0, cool - Date.now());
+      if (waitMs > 0) await sleep(waitMs);
       await bot.api.sendMessage(chatId, text, {
         message_thread_id: topicId,
         parse_mode: parseMode,
       });
       await sleep(MIN_GAP_MS);
+    };
+    // Formatted first; if Telegram rejects the entities (a converter gap),
+    // fall back to the raw text — losing styling is fine, losing the
+    // message is not.
+    try {
+      for (const chunk of splitForTelegram(markdownToTelegramV2(raw), 4000)) {
+        await send(chunk, "MarkdownV2");
+      }
+      return;
     } catch (err) {
       const e = err as { error_code?: number; parameters?: { retry_after?: number } };
       if (e.error_code === 429) {
@@ -77,6 +80,20 @@ async function enqueueSend(
         cooldownUntil.set(topicId, Date.now() + (retry + 1) * 1000);
         // Drop this message rather than queue forever — the user can /snap
         // or wait for fresh entries.
+        return;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[telegram/claude] formatted send failed, retrying plain:", msg);
+    }
+    try {
+      for (const chunk of splitForTelegram(raw, 4000)) {
+        await send(chunk, undefined);
+      }
+    } catch (err) {
+      const e = err as { error_code?: number; parameters?: { retry_after?: number } };
+      if (e.error_code === 429) {
+        const retry = e.parameters?.retry_after ?? 30;
+        cooldownUntil.set(topicId, Date.now() + (retry + 1) * 1000);
         return;
       }
       const msg = err instanceof Error ? err.message : String(err);
@@ -293,13 +310,14 @@ export function findJsonlForSession(opts: {
 function renderEntry(entry: TranscriptEntry): string | null {
   // chat mode = "Claude's reply only" — skip tool_use, tool_result, and
   // thinking blocks. The user can /view screen or look at the web UI for
-  // the full play-by-play.
+  // the full play-by-play. Returns the RAW markdown; the send path converts
+  // it to Telegram MarkdownV2 and keeps this raw form as the fallback.
   if (entry.type === "assistant") {
     const e = entry as AssistantEntry;
     const parts = e.message?.content ?? [];
     const text = parts
       .filter((p) => p.type === "text" && p.text)
-      .map((p) => escapeMarkdownV2(p.text!))
+      .map((p) => p.text!)
       .join("\n\n");
     return text || null;
   }
@@ -401,9 +419,9 @@ export function startClaudeTranscript(
         } catch {
           continue;
         }
-        const md = renderEntry(entry);
-        if (!md) continue;
-        await enqueueSend(bot, chatId, topicId, md, "MarkdownV2");
+        const raw = renderEntry(entry);
+        if (!raw) continue;
+        await enqueueSend(bot, chatId, topicId, raw);
       }
     } catch (err) {
       console.error("[telegram/claude] flush failed", err);
@@ -527,7 +545,7 @@ export function stopAllClaudeTranscripts(): void {
 
 /**
  * Read a topic's own JSONL transcript backwards and return the last
- * assistant text entry, MarkdownV2-escaped.
+ * assistant text entry as raw markdown (callers convert for Telegram).
  *
  * Caps the scan at the last 256 KB so we don't read 100 MB to find a
  * quote.
@@ -547,8 +565,8 @@ export function readLastAssistantText(jsonlPath?: string): string | null {
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const entry = JSON.parse(lines[i]!) as TranscriptEntry;
-        const md = renderEntry(entry);
-        if (md) return md;
+        const raw = renderEntry(entry);
+        if (raw) return raw;
       } catch {
         /* skip non-JSON line */
       }

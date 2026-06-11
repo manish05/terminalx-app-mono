@@ -9,7 +9,7 @@ import {
   getSessionCreatedMs,
   tmuxTarget,
 } from "@/lib/tmux";
-import { renderScreen, stripAnsi } from "./render";
+import { renderScreen, stripAnsi, asCodeBlock } from "./render";
 import { extractSelectionPrompt } from "./selection-prompt";
 import { attachedKeyboard } from "./keyboard";
 import { getTopic, listTopics, patchTopic, getForumChatId, type ViewMode } from "./state";
@@ -369,13 +369,21 @@ async function flushChat(
   rt.lastSentText = text;
   if (newLines.length === 0) return;
 
-  // Plain text — no parse_mode means special chars stay literal, no
-  // backslash-escaping noise, no monospace box.
+  // Terminal output reads wrong in a proportional font — send it as a
+  // monospace code block. Fall back to plain text if Telegram rejects the
+  // entities; losing the styling is fine, losing the output is not.
   const body = newLines.join("\n").trim();
   if (!body) return;
-  await bot.api.sendMessage(chatId, body.slice(0, 4000), {
-    message_thread_id: topicId,
-  });
+  try {
+    await bot.api.sendMessage(chatId, asCodeBlock(body), {
+      message_thread_id: topicId,
+      parse_mode: "MarkdownV2",
+    });
+  } catch {
+    await bot.api.sendMessage(chatId, body.slice(0, 4000), {
+      message_thread_id: topicId,
+    });
+  }
 }
 
 /**
