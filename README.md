@@ -28,6 +28,32 @@ One URL replaces your daily SSH workflow.
 
 ## Quick Start
 
+### Fresh machine (from zero)
+
+On a brand-new Linux host with nothing pre-installed, install the system prerequisites first, then run the setup script. The example below is for Debian/Ubuntu:
+
+```bash
+# 1. System packages: git, tmux, and node-pty build tools
+sudo apt-get update
+sudo apt-get install -y git tmux build-essential python3 curl ca-certificates
+
+# 2. Node.js 20+ (NodeSource); skip if Node 20+ is already present
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# 3. (optional) PM2 for production process management
+sudo npm install -g pm2
+
+# 4. Clone and bootstrap
+git clone https://github.com/dudhatparesh/terminalx-app-mono.git
+cd terminalx-app-mono
+npm run setup            # add --pm2 to run under PM2, --with-whisper for voice notes
+```
+
+On macOS, install the equivalents with Homebrew (`brew install git tmux node`) plus the Xcode command-line tools (`xcode-select --install`), then run steps 3–4.
+
+> AI-CLI session kinds also need the `claude` and/or `codex` CLI installed on the host `PATH` **and logged in** — that login is shared across all TerminalX users on the machine. Install and authenticate them separately from this app.
+
 ### One-command setup
 
 ```bash

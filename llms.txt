@@ -1,0 +1,68 @@
+# TerminalX
+
+> Self-hosted terminal IDE for the browser. Runs directly on a server via node-pty + tmux to expose tabbed terminals, a file browser, and a log viewer over one authenticated web UI — plus an optional Telegram bot that mirrors each tmux session into a forum topic. No SSH tunneling, no cloud dependencies; sessions survive browser disconnects because they are backed by tmux.
+
+Key facts for orienting before making changes:
+
+- **Runtime:** Node.js 20+. A custom server (`server/index.ts`, run with `tsx`) wraps Next.js 16 (App Router) to add WebSocket upgrade handling. There is no separate API process — REST lives in `src/app/api/` and WS in the custom server.
+- **Stack:** Next.js 16 + custom WS server, shadcn/ui + Tailwind CSS 4, xterm.js / wterm + node-pty, `ws`, grammy (Telegram), jose (JWT). Tests run on vitest.
+- **State on disk:** runtime data lives under `data/` (gitignored): `data/users.json`, `data/telegram-state.json` (one Telegram topic ↔ one tmux session binding), `data/recordings/` (optional session replay). Treat these as live, machine-local, and secret.
+- **Process model:** deployed under PM2 in production (`npm run setup -- --pm2`, or `pm2 start npm --name terminalx -- start`). The server shells out to the host's real `tmux`, and AI-CLI sessions exec the host's `claude` / `codex` binaries with the host PATH/login.
+- **Next.js caveat:** this is a pinned, modified Next.js 16 — read `node_modules/next/dist/docs/` before writing App Router code; training-data assumptions about Next.js may be wrong. See AGENTS.md.
+
+## Documentation
+
+- [README.md](README.md): Full overview — features, quick start, Docker, Tailscale, architecture diagram, env-var table, auth modes, Telegram, requirements, security model.
+- [AGENTS.md](AGENTS.md): Canonical coding context for agents — commands, architecture, configuration, and the Next.js-16 "this is not the Next.js you know" warning. Read this first when modifying code.
+- [CLAUDE.md](CLAUDE.md): Points Claude at AGENTS.md as the source of truth.
+- [CONTRIBUTING.md](CONTRIBUTING.md): Contribution workflow and security-vulnerability reporting.
+- [SECURITY.md](SECURITY.md): Security policy.
+- [CHANGELOG.md](CHANGELOG.md): Release history.
+- [THIRD_PARTY.md](THIRD_PARTY.md): Third-party/vendored components and licenses.
+- [.env.example](.env.example): Every supported environment variable with inline setup notes (server, auth, Telegram, transcription).
+
+## Getting started on a fresh machine
+
+On a fully fresh host (nothing pre-installed), install system prerequisites first, then bootstrap. The README's "Fresh machine (from zero)" section has copy-paste commands; in short: install `git`, `tmux`, node-pty build tools (`build-essential`/`python3` on Debian/Ubuntu, Xcode CLI tools on macOS) and Node.js 20+, optionally `pm2` globally, then `git clone` and `npm run setup`.
+
+- [scripts/setup.sh](scripts/setup.sh): One-command bootstrap (`npm run setup`). Checks Node.js/tmux, writes a secure `.env`, generates `TERMINALX_JWT_SECRET`, creates first-start local admin credentials, installs deps, and builds. Flags: `--pm2` (run under PM2), `--with-whisper` (install whisper.cpp + `tiny.en` for Telegram voice notes).
+- [scripts/setup-whisper.sh](scripts/setup-whisper.sh): Install the local whisper.cpp binary/model separately (`npm run setup:whisper -- tiny.en`).
+- [start.sh](start.sh): Production start wrapper.
+- [Dockerfile](Dockerfile) / [docker-compose.yml](docker-compose.yml): Container path — `docker compose up`, then open http://localhost:3000.
+- [package.json](package.json): Scripts — `dev` (custom server + Next), `dev:next` (UI only, no WS), `build`, `start`, `lint`, `test`. Requires `engines.node >= 20`.
+
+Minimum host prerequisites: Node.js 20+, `tmux`, and node-pty build tools (`build-essential` on Debian/Ubuntu, Xcode CLI tools on macOS). Optional: `claude` / `codex` CLIs on PATH and logged in for AI-CLI session kinds. Auth is compulsory — the server refuses to start without an auth mode and JWT secret.
+
+## Configuration
+
+- [.env.example](.env.example): Authoritative variable list. Core: `PORT`, `TERMINUS_HOST` (bind `127.0.0.1` by default; only `0.0.0.0` behind auth/trusted network), `TERMINUS_ROOT` (file-browser root, all paths validated against it), `TERMINUS_SHELL`, `TERMINUS_MAX_SESSIONS`, `TERMINUS_LOG_PATHS`. Auth: `TERMINALX_AUTH_MODE` (`local` | `password` | `google`), `TERMINALX_JWT_SECRET` (required), plus mode-specific password/OAuth vars. Telegram: `TERMINALX_TELEGRAM_BOT_TOKEN`, `..._FORUM_CHAT_ID`, `..._ALLOWED_USERS`, `..._WEBHOOK_URL`, `..._WEBHOOK_SECRET`. Telegram can also be configured at runtime from the admin Settings page.
+
+## Architecture and source map
+
+- [server/index.ts](server/index.ts): Custom Node server wrapping Next.js; handles WS upgrade for `/ws/terminal/:sessionId` (node-pty + tmux), `/ws/logs/:encodedPath` (tail), `/ws/files` (chokidar watcher).
+- [src/app/api](src/app/api): REST endpoints — sessions, files, logs, auth, health, Telegram webhook/settings.
+- [src/lib/tmux.ts](src/lib/tmux.ts): tmux session helpers — create/list/has-session, pane capture, foreground command, and CLI process start-time probes used by the Telegram transcript matcher.
+- [src/lib/pty-manager.ts](src/lib/pty-manager.ts): node-pty lifecycle and terminal I/O bus ([src/lib/terminal-bus.ts](src/lib/terminal-bus.ts)).
+- [src/lib/auth.ts](src/lib/auth.ts) / [src/lib/auth-config.ts](src/lib/auth-config.ts) / [src/middleware.ts](src/middleware.ts): JWT auth, mode resolution, and request gating.
+- [src/lib/session-recorder.ts](src/lib/session-recorder.ts) / [src/lib/log-streamer.ts](src/lib/log-streamer.ts): optional PTY replay recording and log tailing.
+- [src/lib/git-worktree.ts](src/lib/git-worktree.ts): start a session from a repo, optionally creating a branch worktree.
+
+## Telegram subsystem
+
+- [src/lib/telegram/state.ts](src/lib/telegram/state.ts): Persistent topic↔session bindings in `data/telegram-state.json`; mtime-aware cache shared between the bot and Next.js API instances.
+- [src/lib/telegram/streamer.ts](src/lib/telegram/streamer.ts): Per-topic 5s flush loop — screen mode (edits a pinned code block), chat mode (forwards only the AI CLI's replies via the JSONL transcript), and off mode.
+- [src/lib/telegram/claude-transcript.ts](src/lib/telegram/claude-transcript.ts): Resolves and tails the per-session Claude JSONL transcript. Resolution is deliberately conservative in shared-cwd project dirs: it excludes files already claimed by another topic, rotates forward only on restart evidence, and releases a binding whose transcript was born after the pane's CLI launched (a mis-resolved/foreign binding).
+- [src/lib/telegram/codex-transcript.ts](src/lib/telegram/codex-transcript.ts): Same idea for the Codex CLI.
+- [src/lib/telegram/bot.ts](src/lib/telegram/bot.ts) / [render.ts](src/lib/telegram/render.ts) / [selection-prompt.ts](src/lib/telegram/selection-prompt.ts): grammy bot wiring, MarkdownV2 rendering with plain-text fallback, and surfacing of interactive CLI selection prompts.
+
+## Development
+
+- `npm run dev` — custom server (WebSocket + Next.js) for full-stack work.
+- `npm run dev:next` — Next.js only, no WebSocket, for UI iteration.
+- `npm test` — vitest. `npm run lint` — ESLint. `npm run format` — Prettier. A husky pre-commit hook runs lint-staged (prettier + eslint --fix) on staged files.
+
+## Optional
+
+- [components.json](components.json): shadcn/ui generator config.
+- [vendor](vendor): Vendored dependencies (see THIRD_PARTY.md).
+- [tests](tests): Test suites.
