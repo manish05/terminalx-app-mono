@@ -33,6 +33,8 @@ export interface CreateSessionOptions {
   worktree?: {
     create: boolean;
     branch?: string;
+    /** Repo-root-relative paths to symlink into the new worktree (heavy dirs). */
+    symlinkPaths?: string[];
   };
 }
 

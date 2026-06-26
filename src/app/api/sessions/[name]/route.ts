@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { killSession } from "@/lib/tmux";
 import { getUserScoping, canAccessSession } from "@/lib/session-scope";
 import { audit } from "@/lib/audit-log";
-import { deleteMeta, ensureManagedSession } from "@/lib/ai-sessions";
+import { deleteMeta, ensureManagedSession, getMeta } from "@/lib/ai-sessions";
+import { removeGitWorktree } from "@/lib/git-worktree";
 
 interface Ctx {
   params: Promise<{ name: string }>;
@@ -36,7 +37,13 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
       );
     }
 
+    const meta = getMeta(name);
     killSession(name);
+    if (meta?.worktree) {
+      // Removes the worktree and any shared symlinks WITHOUT touching the
+      // shared source (rmSync/unlink never follow the link into its target).
+      removeGitWorktree(meta.worktree.path, meta.worktree.repoRoot, meta.worktree.linkedPaths);
+    }
     await deleteMeta(name);
     audit("session_deleted", { username: username || undefined, detail: name });
     return NextResponse.json({ success: true });

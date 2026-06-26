@@ -7,6 +7,7 @@ import {
   listMetadata,
   saveMeta,
   deleteMeta,
+  getMeta,
   commandForKind,
   isValidKind,
   ensureManagedSession,
@@ -18,6 +19,27 @@ import { getEnsureTopic } from "@/lib/telegram/bot-bridge";
 import { getConfiguredMaxSessions } from "@/lib/security-config";
 import { assertNotSensitivePath, resolveSafePath } from "@/lib/file-service";
 import { createGitWorktreeForSession, removeGitWorktree } from "@/lib/git-worktree";
+
+/**
+ * Accept either an array of paths or a comma/newline-separated string from the
+ * dialog and normalize to a trimmed, de-duplicated, relative-only list. Returns
+ * undefined when nothing usable is supplied so the lib applies its env default.
+ */
+function normalizeSymlinkPaths(input: unknown): string[] | undefined {
+  if (input === undefined || input === null) return undefined;
+  const raw = Array.isArray(input) ? input : typeof input === "string" ? input.split(/[,\n]/) : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of raw) {
+    const trimmed = typeof entry === "string" ? entry.trim() : "";
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  // An explicit empty selection should disable sharing (override env default),
+  // so return [] rather than undefined when the caller sent something.
+  return out;
+}
 
 function resolveSessionStartDir(requestedCwd: unknown): string {
   const requested =
@@ -140,12 +162,18 @@ export async function POST(req: NextRequest) {
           worktreePath: string;
           startDir: string;
           branch: string;
+          linkedPaths: string[];
         }
       | undefined;
     try {
       startDir = resolveSessionStartDir(cwd);
       if (worktree?.create === true) {
-        createdWorktree = createGitWorktreeForSession(startDir, worktree.branch);
+        const symlinkPaths = normalizeSymlinkPaths(worktree.symlinkPaths);
+        createdWorktree = createGitWorktreeForSession(
+          startDir,
+          worktree.branch,
+          symlinkPaths ? { symlinkPaths } : undefined
+        );
         startDir = createdWorktree.startDir;
       }
     } catch (err) {
@@ -175,6 +203,7 @@ export async function POST(req: NextRequest) {
             repoRoot: createdWorktree.repoRoot,
             path: createdWorktree.worktreePath,
             branch: createdWorktree.branch,
+            linkedPaths: createdWorktree.linkedPaths,
           }
         : undefined,
     });
@@ -256,7 +285,13 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
+    const meta = getMeta(name);
     killSession(name);
+    if (meta?.worktree) {
+      // Removes the worktree and any shared symlinks WITHOUT touching the
+      // shared source (rmSync/unlink never follow the link into its target).
+      removeGitWorktree(meta.worktree.path, meta.worktree.repoRoot, meta.worktree.linkedPaths);
+    }
     await deleteMeta(name);
     audit("session_deleted", { username: username || undefined, detail: name });
     return NextResponse.json({ success: true });

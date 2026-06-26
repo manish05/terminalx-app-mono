@@ -24,10 +24,12 @@ import {
 } from "@/hooks/useSessions";
 
 function slugify(raw: string): string {
+  // Preserve characters the session API already accepts (a-z 0-9 _ . -) so a
+  // typed name like "e2e-symlink-123" round-trips to the same session name.
   return raw
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/[^a-z0-9 _.-]/g, "")
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
@@ -195,6 +197,8 @@ export function DashboardView() {
   const [gitInfo, setGitInfo] = useState<GitDirectoryInfo>({ isRepo: false });
   const [createWorktree, setCreateWorktree] = useState(false);
   const [worktreeBranch, setWorktreeBranch] = useState("");
+  const [symlinkShared, setSymlinkShared] = useState(false);
+  const [symlinkPaths, setSymlinkPaths] = useState("node_modules");
   const [createError, setCreateError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -221,6 +225,7 @@ export function DashboardView() {
       if (!nextGitInfo.isRepo) {
         setCreateWorktree(false);
         setWorktreeBranch("");
+        setSymlinkShared(false);
       }
     } catch (err) {
       setDirectoryError(err instanceof Error ? err.message : "Failed to list directories");
@@ -243,6 +248,8 @@ export function DashboardView() {
     setGitInfo({ isRepo: false });
     setCreateWorktree(false);
     setWorktreeBranch("");
+    setSymlinkShared(false);
+    setSymlinkPaths("node_modules");
     setCreateError(null);
     setShowDialog(true);
     void loadDirectories(".");
@@ -273,10 +280,19 @@ export function DashboardView() {
       return setCreateError("enter a valid branch name");
     }
     setCreateError(null);
+    const sharedPaths =
+      createWorktree && symlinkShared
+        ? symlinkPaths
+            .split(/[,\n]/)
+            .map((p) => p.trim())
+            .filter(Boolean)
+        : [];
     const session = await createSession(n, kind, {
       dangerouslySkipPermissions: kind === "claude" ? skipPermissions : undefined,
       cwd: directoryPath,
-      worktree: createWorktree ? { create: true, branch } : undefined,
+      worktree: createWorktree
+        ? { create: true, branch, symlinkPaths: symlinkShared ? sharedPaths : undefined }
+        : undefined,
     });
     if (session) {
       setShowDialog(false);
@@ -290,6 +306,8 @@ export function DashboardView() {
     directoryError,
     createWorktree,
     worktreeBranch,
+    symlinkShared,
+    symlinkPaths,
     sessions,
     createSession,
     router,
@@ -419,7 +437,9 @@ export function DashboardView() {
               ref={inputRef}
               value={name}
               onChange={(e) => {
-                const nextName = e.target.value.replace(/[^A-Za-z0-9 ]/g, "");
+                // Allow the same characters the session API accepts (letters,
+                // numbers, space, and _ . -) so hyphenated names survive.
+                const nextName = e.target.value.replace(/[^A-Za-z0-9 _.-]/g, "");
                 setName(nextName);
                 if (createWorktree && (!worktreeBranch.trim() || worktreeBranch === "feature/")) {
                   setWorktreeBranch(defaultBranchName(slugify(nextName)));
@@ -598,6 +618,59 @@ export function DashboardView() {
                     <p className="mt-1 text-[10px] text-[#6b7569] leading-tight">
                       starts from the selected repo HEAD and opens the new session in that worktree.
                     </p>
+
+                    <label className="mt-3 flex items-center gap-2 text-[11px] text-[#e6f0e4] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        data-testid="worktree-symlink-toggle"
+                        checked={symlinkShared}
+                        onChange={(e) => {
+                          setSymlinkShared(e.target.checked);
+                          setCreateError(null);
+                        }}
+                        className="accent-[#00cc6e] cursor-pointer"
+                      />
+                      symlink shared paths into the worktree
+                    </label>
+                    {symlinkShared && (
+                      <div className="mt-2">
+                        <label
+                          htmlFor="worktree-symlink-paths"
+                          className="block text-[10px] uppercase tracking-wider text-[#6b7569] mb-1.5"
+                        >
+                          shared paths
+                        </label>
+                        <input
+                          id="worktree-symlink-paths"
+                          data-testid="worktree-symlink-paths"
+                          value={symlinkPaths}
+                          onChange={(e) => {
+                            setSymlinkPaths(e.target.value);
+                            setCreateError(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleCreate();
+                            if (e.key === "Escape") setShowDialog(false);
+                          }}
+                          placeholder="node_modules, .next/cache"
+                          spellCheck={false}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          className="w-full px-2 py-1.5 rounded bg-[#0f1117] border border-[#252933]
+                            text-[#e6f0e4] text-[12px] placeholder:text-[#6b7569]/50 font-mono
+                            focus:outline-none focus:border-[#00ff88] transition-colors"
+                        />
+                        <p className="mt-1 text-[10px] text-[#6b7569] leading-tight">
+                          comma-separated, repo-relative. heavy dirs like{" "}
+                          <code className="text-[#e6f0e4] bg-transparent border-0 px-0">
+                            node_modules
+                          </code>{" "}
+                          are linked to the shared copy instead of re-installed (copied if symlinks
+                          aren&apos;t supported).
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

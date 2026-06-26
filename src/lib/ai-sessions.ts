@@ -16,6 +16,8 @@ export interface SessionMeta {
     repoRoot: string;
     path: string;
     branch: string;
+    /** Absolute paths inside the worktree linked/copied from the shared source. */
+    linkedPaths?: string[];
   };
 }
 
