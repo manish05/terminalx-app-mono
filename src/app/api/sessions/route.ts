@@ -97,6 +97,11 @@ export async function GET(req: NextRequest) {
         kind: meta?.kind ?? "bash",
         cwd: meta?.cwd ?? s.activePath,
         worktree: meta?.worktree,
+        // Feature #5: surface the per-workspace injected port + setup lifecycle so
+        // clients (command palette, workspace UI) can read TERMINALX_PORT and the
+        // setup status. Persisted on create but previously dropped from this list.
+        port: meta?.port,
+        setup: meta?.setup,
         managed: ensureManagedSession(s.name),
         telegram: telegram
           ? {

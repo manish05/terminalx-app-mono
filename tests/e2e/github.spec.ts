@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import * as fs from "fs";
+import * as path from "path";
 
 /**
  * E2E for Issue #7 — "secure GitHub integration layer".
@@ -20,6 +22,30 @@ const FAKE_VIEWER = {
   url: "https://api.github.com/users/octocat",
   type: "User",
 };
+
+// The GitHub layer persists integrations + encrypted tokens to data/github-*.json
+// off process.cwd() (the repo root). Those files survive across runs, so without
+// cleanup a leftover integration record makes the server reject the next Connect
+// with 409 (uniqueness on userId+serverUrl+authType) and the status never flips.
+// Remove the store files before and after each run so every test starts from a
+// genuinely disconnected slate — the PRODUCT is correct; this is test isolation.
+const DATA_DIR = path.resolve(__dirname, "..", "..", "data");
+
+function clearGitHubStore(): void {
+  for (const entry of fs.existsSync(DATA_DIR) ? fs.readdirSync(DATA_DIR) : []) {
+    if (entry.startsWith("github-") && entry.endsWith(".json")) {
+      fs.rmSync(path.join(DATA_DIR, entry), { force: true });
+    }
+  }
+}
+
+test.beforeEach(() => {
+  clearGitHubStore();
+});
+
+test.afterEach(() => {
+  clearGitHubStore();
+});
 
 test("connects a GitHub PAT and shows connected status", async ({ page }) => {
   // Mock GitHub's GET /user (the credential validation hop) so no real token is

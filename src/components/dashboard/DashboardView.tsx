@@ -458,7 +458,7 @@ export function DashboardView() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-[560px] max-w-[92vw] rounded bg-[#14161e] border border-[#363b47] p-4"
+            className="w-[560px] max-w-[92vw] max-h-[80vh] overflow-y-auto rounded bg-[#14161e] border border-[#363b47] p-4"
             style={{ boxShadow: "0 8px 24px rgba(0, 0, 0, 0.6)" }}
           >
             <div className="flex items-center justify-between mb-3">

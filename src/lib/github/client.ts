@@ -22,7 +22,15 @@ export interface ClientOptions {
 
 const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_USER_AGENT = "TerminalX/1.0";
+// The default GitHub REST host. Overridable via GITHUB_API_BASE_URL so the server
+// can point at GitHub Enterprise, an authenticated proxy, or (in e2e) a local
+// mock — without changing call sites. An explicit `baseUrl` option still wins.
 const DEFAULT_BASE_URL = "https://api.github.com";
+
+function defaultBaseUrl(): string {
+  const override = process.env.GITHUB_API_BASE_URL?.trim();
+  return override || DEFAULT_BASE_URL;
+}
 
 /** Map an HTTP Response to a GitHubErrorCode (§4.1 classifyError, expanded). */
 export function classifyResponse(status: number, headers: Headers): GitHubErrorCode {
@@ -116,7 +124,7 @@ export class GitHubAPIClient {
     this.timeout = options?.timeout ?? DEFAULT_TIMEOUT;
     this.maxRetries = options?.retryCount ?? DEFAULT_RETRY_POLICY.maxAttempts;
     this.userAgent = options?.userAgent ?? DEFAULT_USER_AGENT;
-    this.baseUrl = (options?.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.baseUrl = (options?.baseUrl ?? defaultBaseUrl()).replace(/\/+$/, "");
     this.retryPolicy = options?.retryPolicy ?? DEFAULT_RETRY_POLICY;
     this.fetchImpl = options?.fetchImpl ?? globalThis.fetch;
     this.sleep =

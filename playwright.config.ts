@@ -54,6 +54,13 @@ export default defineConfig({
       // Production startup still forbids `none` unless this is explicitly set.
       TERMINALX_ALLOW_AUTH_NONE: "true",
       TERMINUS_ROOT: SANDBOX_REPO,
+      // Master key for the GitHub token vault (a base64-encoded 32-byte key) so
+      // the e2e server can encrypt PATs at rest without a real production secret.
+      TERMINALX_GITHUB_TOKEN_MASTER_KEY: "5hA7+v5UNOOW0BeCMmltY7i1Rwh52Jdx7KKt8HcvtTY=",
+      // Point the server-side GitHub REST client at the in-process test mock
+      // (src/app/api/test-github-mock) so the connect flow's `GET /user` hop
+      // resolves offline. The mock only responds while auth-none is enabled.
+      GITHUB_API_BASE_URL: `${BASE_URL}/api/test-github-mock`,
     },
   },
 });

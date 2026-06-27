@@ -134,9 +134,21 @@ test("a configured run script surfaces in the command palette", async ({ page, r
 
   // Open the command palette on the workspace route and find `run · dev`.
   await page.goto(`/workspace/${encodeURIComponent(sessionName)}`);
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+  // Wait until the AppShell (which owns the ⌘K listener) has mounted before
+  // dispatching the shortcut — the visible "commands" affordance is a stable
+  // readiness signal. Then press ⌘K, retrying so a single keystroke racing the
+  // terminal's focus grab can't be silently dropped.
+  const paletteHotkey = process.platform === "darwin" ? "Meta+K" : "Control+K";
   const palette = page.getByPlaceholder(/search commands/i);
-  await expect(palette).toBeVisible();
+  await expect(page.getByText("commands", { exact: false }).first()).toBeVisible();
+  await expect(async () => {
+    // ⌘K toggles, so only press when the palette is currently closed — that way a
+    // retry can't close a palette that just opened.
+    if (!(await palette.isVisible())) {
+      await page.keyboard.press(paletteHotkey);
+    }
+    await expect(palette).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
   await palette.fill("run");
   await expect(page.getByText(/run · dev/)).toBeVisible();
   await expect(page.getByText(/workspace · run setup/)).toBeVisible();
