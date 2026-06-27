@@ -36,7 +36,11 @@ export type AuditEvent =
   | "workspace_script_run"
   | "workspace_setup_run"
   // Models & harness settings (feature #11): repo-scope settings write.
-  | "settings_repo_updated";
+  | "settings_repo_updated"
+  // OpenCode provider catalog (feature #8): records only the provider id + scope,
+  // never a provider secret (auth is delegated to OpenCode's config / .env).
+  | "opencode_provider_configured"
+  | "opencode_provider_removed";
 
 interface AuditEntry {
   timestamp: string;
