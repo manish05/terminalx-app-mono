@@ -6,6 +6,12 @@ import { Bot, ExternalLink, Save, Shield } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { EngineToggle } from "@/components/terminal/EngineToggle";
 import { MobileSection } from "@/components/settings/MobileSection";
+// Issue #4: Harnesses settings surface (AI runtime tabs + OpenCode config).
+import { HarnessTabs } from "@/components/settings/HarnessTabs";
+// Workspace config (feature #5): User/Repo scope tabs + Edit settings.toml.
+import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
+// GitHub integration (feature #7): connect repos, tokens, webhooks.
+import { GitHubSettings } from "@/components/settings/GitHubSettings";
 import type { TelegramViewMode } from "@/hooks/useSessions";
 
 interface HealthInfo {
@@ -241,9 +247,19 @@ export function SettingsView() {
           )}
         </Section>
 
+        <GitHubSettings />
+
         <Section title="terminal engine" desc="reloads new tabs">
           <EngineToggle />
         </Section>
+
+        {/* Issue #4: Harnesses — AI runtimes available to new sessions. */}
+        <Section title="harnesses" desc="AI runtimes available to new sessions">
+          <HarnessTabs />
+        </Section>
+
+        {/* Workspace config (feature #5) — its own card with User/Repo tabs. */}
+        <WorkspaceSettings />
 
         <Section title="mobile" desc="pair the terminalx mobile app">
           <MobileSection />

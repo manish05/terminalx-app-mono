@@ -7,7 +7,9 @@ import { useRouter } from "next/navigation";
 import { ChevronRight, GitBranch, History, Plus, Settings, Sparkles, Terminal } from "lucide-react";
 import { TopNav } from "./TopNav";
 import { StatusBar } from "./StatusBar";
-import { RightPanel } from "./RightPanel";
+// feature #2 (diff viewer): the right aside now hosts the Review panel, whose
+// "Changes" tab is the diff viewer. ReviewPanel supersedes RightPanel (spec §9.1).
+import { ReviewPanel } from "@/components/review/ReviewPanel";
 import { CommandPalette } from "./CommandPalette";
 import { useOpenTabs } from "@/hooks/useOpenTabs";
 import { useSessions, type SessionKind, type TmuxSession } from "@/hooks/useSessions";
@@ -228,7 +230,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </section>
       <aside className="hidden h-full w-[360px] shrink-0 flex-col bg-[#0a0b10] xl:flex 2xl:w-[400px]">
         <div className="min-h-0 flex-1">
-          <RightPanel />
+          {/* feature #2: ReviewPanel (All files / Changes / Checks / Review),
+              scoped to the active session. The Changes tab is the diff viewer. */}
+          <ReviewPanel session={activeSession} />
         </div>
         <InspectorTerminal activeSession={activeSession} />
       </aside>
