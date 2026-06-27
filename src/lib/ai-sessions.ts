@@ -50,6 +50,17 @@ export interface SessionMeta {
     finishedAt?: string;
     exitCode?: number;
   };
+
+  // --- Worktree sidebar flags (feature #12, completed by #9) — optional.
+  // A worktree row can be collapsed (hidden from its workspace group) or
+  // archived. #12 wires the UI + a minimal archive endpoint; #9 builds the full
+  // archive/restore + cleanup system. Old records without these stay valid.
+  /** Worktree row is collapsed in the sidebar group. */
+  collapsed?: boolean;
+  /** Worktree has been archived (issue #9 completes restore/cleanup). */
+  archived?: boolean;
+  /** When the worktree was archived (ISO timestamp). */
+  archivedAt?: string;
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -99,6 +110,27 @@ export async function saveMeta(meta: SessionMeta): Promise<void> {
       list.push(meta);
     }
     atomicWrite(list);
+  });
+}
+
+/**
+ * Shallow-merge a partial patch into an existing session's metadata (serialized,
+ * atomic). Returns the updated record, or undefined when no such session exists.
+ * Used by the worktree sidebar (feature #12) to flip collapsed/archived flags
+ * without rewriting the whole record. `name` is never patched.
+ */
+export async function patchMeta(
+  name: string,
+  patch: Partial<Omit<SessionMeta, "name">>
+): Promise<SessionMeta | undefined> {
+  return withLock(async () => {
+    const list = listMetadata();
+    const idx = list.findIndex((m) => m.name === name);
+    if (idx === -1) return undefined;
+    const updated = { ...list[idx], ...patch, name } as SessionMeta;
+    list[idx] = updated;
+    atomicWrite(list);
+    return updated;
   });
 }
 
