@@ -11,13 +11,13 @@ import {
   fileId,
   mapStatus,
   mergeNameStatusAndNumstat,
-  pairLines,
   parseNameStatus,
   parseNumstat,
   parseUnifiedDiff,
   resolveBase,
   splitPath,
 } from "@/lib/git-diff";
+import { pairLines } from "@/lib/diff-pairing";
 import type { DiffLine } from "@/types/diff";
 
 function hasGit(): boolean {

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { DiffHunk } from "@/types/diff";
-import { pairLines } from "@/lib/git-diff";
+import { pairLines } from "@/lib/diff-pairing";
 import { LineView, SplitCell } from "./LineView";
 
 interface HunkViewProps {
